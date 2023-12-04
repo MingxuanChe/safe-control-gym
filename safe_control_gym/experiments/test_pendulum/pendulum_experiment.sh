@@ -2,9 +2,9 @@
 
 # LQR Experiment.
 
-SYS='cartpole'
+# SYS='cartpole'
 # SYS='quadrotor_2D'
-# SYS='quadrotor_3D'
+SYS='pendulum'
 
 TASK='stabilization'
 # TASK='tracking'
@@ -12,13 +12,13 @@ TASK='stabilization'
 ALGO='lqr'
 # ALGO='ilqr'
 
-if [ "$SYS" == 'cartpole' ]; then
+if [ "$SYS" == 'pendulum' ]; then
     SYS_NAME=$SYS
 else
     SYS_NAME='quadrotor'
 fi
 
-python3 ./lqr_experiment.py \
+python3 ./pendulum_experiment.py \
     --task ${SYS_NAME} \
     --algo ${ALGO} \
     --overrides \

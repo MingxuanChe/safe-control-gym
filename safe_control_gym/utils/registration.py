@@ -93,6 +93,8 @@ class Registry():
         return self.specs.values()
 
     def spec(self, path):
+        # print(self.specs)
+        # exit()
         '''Returns spec of the registered callable by id.'''
         if ':' in path:
             mod_name, _ = path.split(':')

@@ -25,7 +25,7 @@ from safe_control_gym.math_and_models.normalization import normalize_angle
 from safe_control_gym.math_and_models.symbolic_systems import SymbolicModel
 
 
-class CartPole(BenchmarkEnv):
+class Pendulum(BenchmarkEnv):
     '''Cartpole environment task.
 
     Including symbolic model, constraints, randomization, adversarial disturbances,
@@ -172,14 +172,16 @@ class CartPole(BenchmarkEnv):
 
         # Set the initial state.
         if init_state is None:
-            self.INIT_X, self.INIT_X_DOT, self.INIT_THETA, self.INIT_THETA_DOT = np.zeros(4)
+            self.INIT_THETA, self.INIT_THETA_DOT = np.zeros(2)
         elif isinstance(init_state, np.ndarray):
-            self.INIT_X, self.INIT_X_DOT, self.INIT_THETA, self.INIT_THETA_DOT = init_state
+            self.INIT_THETA, self.INIT_THETA_DOT = init_state
         elif isinstance(init_state, dict):
-            self.INIT_X = init_state.get('init_x', 0)
-            self.INIT_X_DOT = init_state.get('init_x_dot', 0)
+            # self.INIT_X = init_state.get('init_x', 0)
+            # self.INIT_X_DOT = init_state.get('init_x_dot', 0)
             self.INIT_THETA = init_state.get('init_theta', 0)
             self.INIT_THETA_DOT = init_state.get('init_theta_dot', 0)
+
+            exit()
         else:
             raise ValueError('[ERROR] in CartPole.__init__(), init_state incorrect format.')
 
@@ -239,9 +241,8 @@ class CartPole(BenchmarkEnv):
         # Advance the simulation.
         self._advance_simulation(force)
         # Update the state.
-        self.state = np.hstack(
-            (p.getJointState(self.CARTPOLE_ID, jointIndex=0,
-                             physicsClientId=self.PYB_CLIENT)[0:2], p.getJointState(self.CARTPOLE_ID, jointIndex=1, physicsClientId=self.PYB_CLIENT)[0:2]))
+        self.state = p.getJointState(self.CARTPOLE_ID, jointIndex=1, physicsClientId=self.PYB_CLIENT)[0:2]
+        
         # Standard Gym return.
         obs = self._get_observation()
         rew = self._get_reward()
@@ -308,11 +309,11 @@ class CartPole(BenchmarkEnv):
             mass=self.OVERRIDDEN_POLE_MASS,
             physicsClientId=self.PYB_CLIENT)
         # Randomize initial state.
-        init_values = {'init_x': self.INIT_X, 'init_x_dot': self.INIT_X_DOT, 'init_theta': self.INIT_THETA, 'init_theta_dot': self.INIT_THETA_DOT}
+        init_values = {'init_theta': self.INIT_THETA, 'init_theta_dot': self.INIT_THETA_DOT}
         if self.RANDOMIZED_INIT:
             init_values = self._randomize_values_by_info(init_values, self.INIT_STATE_RAND_INFO)
-        OVERRIDDEN_INIT_X = init_values['init_x']
-        OVERRIDDEN_INIT_X_DOT = init_values['init_x_dot']
+        # OVERRIDDEN_INIT_X = init_values['init_x']
+        # OVERRIDDEN_INIT_X_DOT = init_values['init_x_dot']
         OVERRIDDEN_INIT_THETA = init_values['init_theta']
         OVERRIDDEN_INIT_THETA_DOT = init_values['init_theta_dot']
         p.resetJointState(
@@ -328,9 +329,8 @@ class CartPole(BenchmarkEnv):
             targetVelocity=OVERRIDDEN_INIT_THETA_DOT,
             physicsClientId=self.PYB_CLIENT)
         # Compute state (x, x_dot, theta, theta_dot).
-        self.state = np.hstack(
-            (p.getJointState(self.CARTPOLE_ID, jointIndex=0,
-                             physicsClientId=self.PYB_CLIENT)[0:2], p.getJointState(self.CARTPOLE_ID, jointIndex=1, physicsClientId=self.PYB_CLIENT)[0:2]))
+        
+        self.state = p.getJointState(self.CARTPOLE_ID, jointIndex=1, physicsClientId=self.PYB_CLIENT)[0:2]
         # Debug visualization if GUI enabled
         self.line = None
         obs, info = self._get_observation(), self._get_reset_info()
@@ -403,10 +403,7 @@ class CartPole(BenchmarkEnv):
         nu = 1
         ml2 = m * length **2
         b = 0.1
-        # Dynamics.
-        # temp_factor = (U + ml * theta_dot**2 * cs.sin(theta)) / Mm
-        # theta_dot_dot = ((g * cs.sin(theta) - cs.cos(theta) * temp_factor) / (length * (4.0 / 3.0 - m * cs.cos(theta)**2 / Mm)))
-        # X_dot = cs.vertcat(x_dot, temp_factor - ml * theta_dot_dot * cs.cos(theta) / Mm, theta_dot, theta_dot_dot)
+
         theta_dot_dot = 1/ml2 * (U - m * g * cs.sin(theta) - b * theta_dot)
         X_dot = cs.vertcat(theta_dot, theta_dot_dot)
         # Observation.
@@ -451,9 +448,12 @@ class CartPole(BenchmarkEnv):
         # NOTE: different value in PyBullet gym (0.4) and OpenAI gym (2.4).
         self.x_threshold = 2.4
         # Limit set to 2x: i.e. a failing observation is still within bounds.
-        obs_bound = np.array([self.x_threshold * 2, np.finfo(np.float32).max, self.theta_threshold_radians * 2, np.finfo(np.float32).max])
+        obs_bound = np.array([self.theta_threshold_radians * 2, np.finfo(np.float32).max])
         self.state_space = spaces.Box(low=-obs_bound, high=obs_bound, dtype=np.float32)
-
+        # print(self.state_space)
+        # self.state_space.
+        # exit()
+        
         # Concatenate goal info for RL
         if self.COST == Cost.RL_REWARD and self.TASK == Task.TRAJ_TRACKING and self.obs_goal_horizon > 0:
             # include future goal state(s)

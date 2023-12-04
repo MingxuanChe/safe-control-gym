@@ -5,9 +5,6 @@ import pickle
 from collections import defaultdict
 from functools import partial
 
-import sys
-sys.path.insert(0, '/home/mingxuan/Repositories/scg_mx/safe-control-gym')
-
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FormatStrFormatter
@@ -37,8 +34,6 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
                        config.task,
                        **config.task_config
                        )
-    # print(env_func)
-    # exit()
     random_env = env_func(gui=False)
 
     # Create controller.
