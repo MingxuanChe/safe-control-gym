@@ -182,6 +182,38 @@ class SQPMPC(MPC):
         Ad, Bd = discretize_linear_system(dfdx, dfdu, self.dt, exact=True)
         return Ad, Bd
 
+    def get_sqp_cost_func(self):
+        # quadratic term
+        T = self.T
+        nx, nu = self.model.nx, self.model.nu
+        S, state_cost_lin, input_cost_lin = get_cost(self.R, self.Q, T)
+        # linear term
+        # print('u_guess.shape', u_guess.shape)
+
+        u_guess = cs.MX.sym('u_guess', nu, T)
+        x_guess = cs.MX.sym('x_guess', nx, T + 1)
+        x_ref = cs.MX.sym('x_ref', nx, T + 1)
+
+        f_1 = 2 * input_cost_lin @ u_guess # input cost
+        f_2 = 2 * input_cost_lin @ (x_guess - x_ref) # state cost
+        H = 2 * S
+        f = cs.vertcat(f_1, f_2)
+        assert f_1.shape[0] == nu * T
+        assert f_2.shape[0] == nx * (T + 1) 
+        assert H.shape[0] == nx * (T + 1) + nu * T 
+        assert H.shape[0] == H.shape[1]
+        du_var = cs.MX.sym('du_var', nu * T, 1)
+        dx_var = cs.MX.sym('dx_var', nx * (T + 1), 1)
+        dz = cs.vertcat(du_var, dx_var)
+        sqp_cost = 0.5 * cs.mtimes(dz.T, cs.mtimes(H, dz)) + cs.mtimes(f.T, dz)
+        sqp_cost_input = [du_var, dx_var, u_guess, x_guess, x_ref]
+        sqp_cost_input_str = ['du_var', 'dx_var', 'u_guess', 'x_guess', 'x_ref'] 
+        sqp_cost_output = [sqp_cost]
+        sqp_cost_output_str = ['sqp_cost']
+        sqp_cost_func = cs.Function('sqp_cost_func', sqp_cost_input, sqp_cost_output, \
+                                                     sqp_cost_input_str, sqp_cost_output_str)
+        return sqp_cost_func
+
     def setup_sqp_optimizer(self, init_state, solver='qrqp'):
         '''Setup the optimizer for the SQP MPC.'''
         # create the refernce trajectory for linearization
@@ -191,6 +223,8 @@ class SQPMPC(MPC):
             # TODO: compute the initial guess in select_action
             self.compute_initial_guess(init_state, self.get_references())
         x_guess, u_guess = self.x_prev, self.u_prev
+        print('x_guess.shape', x_guess.shape)
+        print('u_guess.shape', u_guess.shape)
         
         nx, nu = self.model.nx, self.model.nu
         T = self.T
@@ -213,22 +247,9 @@ class SQPMPC(MPC):
         state_slack = opti.variable(len(self.state_constraints_sym))
         input_slack = opti.variable(len(self.input_constraints_sym))
 
-        # cost 
-        # quadratic term
-        S, state_cost_lin, input_cost_lin = get_cost(self.R, self.Q, T)
-        # linear term
-        f_1 = 2 * input_cost_lin @ u_guess # input cost
-        f_2 = 2 * input_cost_lin @ (x_guess - x_ref) # state cost
-        H = 2 * S
-        f = cs.vertcat(f_1, f_2)
-        assert f_1.shape[0] == nu * T
-        assert f_2.shape[0] == nx * (T + 1) 
-        assert H.shape[0] == nx * (T + 1) + nu * T 
-        assert H.shape[0] == H.shape[1]
-
-        dz = cs.vertcat(du_var, dx_var)
-        cost = 0.5 * cs.mtimes(dz.T, cs.mtimes(H, dz)) + cs.mtimes(f.T, dz)
-
+        # cost
+        cost_func = self.get_sqp_cost_func()
+        cost = cost_func(du_var=du_var, dx_var=dx_var, u_guess=u_guess, x_guess=x_guess, x_ref=x_ref)
 
         # # linearized system dynamics constraints
         # A_bar = np.zeros((nx * (T + 1), nx * (T + 1)))
