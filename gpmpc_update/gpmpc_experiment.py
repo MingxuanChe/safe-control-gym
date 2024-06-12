@@ -109,6 +109,18 @@ def train(config):
             graph3_1 = 0
             graph3_2 = 4
         
+        # plot results['current_physical_action']
+        _, ax_act = plt.subplots()
+        ax_act.plot(results['current_physical_action'][0][:, 0], 'b', label='Thrust')
+        if config.task_config.quad_type == 4:
+            ax_act.plot(results['current_physical_action'][0][:, 1], 'r', label='Pitch')
+        else:
+            ax_act.plot(results['current_physical_action'][0][:, 1], 'r', label='Thrust')
+        ax_act.legend()
+        ax_act.set_xlabel('Step')
+        ax_act.set_ylabel('Input')
+        plt.savefig(os.path.join(config.output_dir, 'inputs.png'))
+
         if config.task_config.quad_type != 4:
             _, ax = plt.subplots()
             ax.plot(results['obs'][0][:, graph1_1], results['obs'][0][:, graph1_2], 'r--', label='Agent Trajectory')

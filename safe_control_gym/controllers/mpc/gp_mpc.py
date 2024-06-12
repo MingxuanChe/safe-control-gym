@@ -674,26 +674,27 @@ class GPMPC(MPC):
             self.u_prev = u_val
             self.x_prev = x_val
         except RuntimeError:
-            # sol = opti.solve()
-            # x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
-            return_status = opti.return_status()
-            print(f'Optimization failed with status: {return_status}')
-            if return_status == 'unknown':
-                # self.terminate_loop = True
-                u_val = self.u_prev
-                x_val = self.x_prev
-                if u_val is None:
-                    print('[WARN]: MPC Infeasible first step.')
-                    u_val = u_guess
-                    x_val = x_guess
-            elif return_status == 'Maximum_Iterations_Exceeded':
-                self.terminate_loop = True
-                u_val = opti.debug.value(u_var)
-                x_val = opti.debug.value(x_var)
-            elif return_status == 'Search_Direction_Becomes_Too_Small':
-                self.terminate_loop = True
-                u_val = opti.debug.value(u_var)
-                x_val = opti.debug.value(x_var)
+            if self.sqp_solver == 'ipopt':
+                x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+            else :
+                return_status = opti.return_status()
+                print(f'Optimization failed with status: {return_status}')
+                if return_status == 'unknown':
+                    # self.terminate_loop = True
+                    u_val = self.u_prev
+                    x_val = self.x_prev
+                    if u_val is None:
+                        print('[WARN]: MPC Infeasible first step.')
+                        u_val = u_guess
+                        x_val = x_guess
+                elif return_status == 'Maximum_Iterations_Exceeded':
+                    self.terminate_loop = True
+                    u_val = opti.debug.value(u_var)
+                    x_val = opti.debug.value(x_var)
+                elif return_status == 'Search_Direction_Becomes_Too_Small':
+                    self.terminate_loop = True
+                    u_val = opti.debug.value(u_var)
+                    x_val = opti.debug.value(x_var)
 
         u_val = np.atleast_2d(u_val)
         self.x_prev = x_val
