@@ -58,6 +58,8 @@ class GPMPC(MPC):
             learning_rate: list = None,
             normalize_training_data: bool = False,
             use_gpu: bool = False,
+            kernel: str = 'RBF',
+            parallel: bool = False,
             gp_model_path: str = None,
             prob: float = 0.955,
             initial_rollout_std: float = 0.005,
@@ -172,6 +174,9 @@ class GPMPC(MPC):
         self.overwrite_saved_data = overwrite_saved_data
         self.optimization_iterations = optimization_iterations
         self.learning_rate = learning_rate
+
+        self.kernel = kernel
+        self.parallel = parallel
         self.gp_model_path = gp_model_path
         self.normalize_training_data = normalize_training_data
         self.prob = prob
@@ -830,15 +835,21 @@ class GPMPC(MPC):
         test_targets_tensor = torch.Tensor(test_targets).double()
 
         # Define likelihood.
-        likelihood = gpytorch.likelihoods.GaussianLikelihood(
-            noise_constraint=gpytorch.constraints.GreaterThan(1e-6),
-        ).double()
+        if self.parallel:
+            likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_shape=torch.Size([len(self.target_mask)]),
+                                                                 noise_constraint=gpytorch.constraints.GreaterThan(1e-6)).double()
+        else:
+            likelihood = gpytorch.likelihoods.GaussianLikelihood(
+                noise_constraint=gpytorch.constraints.GreaterThan(1e-6),
+            ).double()
         self.gaussian_process = GaussianProcessCollection(ZeroMeanIndependentGPModel,
                                                           likelihood,
                                                           len(self.target_mask),
                                                           input_mask=self.input_mask,
                                                           target_mask=self.target_mask,
-                                                          normalize=self.normalize_training_data
+                                                          normalize=self.normalize_training_data,
+                                                          kernel=self.kernel,
+                                                          parallel=self.parallel
                                                           )
         if gp_model:
             self.gaussian_process.init_with_hyperparam(train_inputs_tensor,
