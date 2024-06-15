@@ -51,7 +51,7 @@ task_config:
   disturbances: null
   task: traj_tracking
   task_info:
-    trajectory_type: figure8
+    trajectory_type: circle # figure8
     num_cycles: 2
     trajectory_plane: 'xz'
     trajectory_position_offset: [0, 1.2]

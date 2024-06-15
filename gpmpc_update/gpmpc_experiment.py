@@ -77,7 +77,9 @@ def train(config):
     eval_env = env_func(seed=config.seed * 111)
 
     experiment = BaseExperiment(eval_env, control_agent)
-    if config.algo_config.gp_model_path is not None:
+    if config.algo_config.num_epochs == 1:
+        pass
+    elif config.algo_config.gp_model_path is not None:
         control_agent.load(config.algo_config.gp_model_path)
     else:
         experiment.launch_training()

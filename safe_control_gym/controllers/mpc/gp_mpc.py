@@ -214,6 +214,7 @@ class GPMPC(MPC):
         Q_lqr = self.Q
         R_lqr = self.R
         P = scipy.linalg.solve_discrete_are(A, B, Q_lqr, R_lqr)
+        self.P = P
         btp = np.dot(B.T, P)
         self.lqr_gain = -np.dot(np.linalg.inv(self.R + np.dot(btp, B)), np.dot(btp, A))
         self.discrete_dfdx = A

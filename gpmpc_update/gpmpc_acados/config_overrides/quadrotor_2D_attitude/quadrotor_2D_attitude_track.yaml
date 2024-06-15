@@ -3,6 +3,7 @@ task_config:
   pyb_freq: 840
   gui: False
   quad_type: 4
+  physics: dyn
   info_in_reset: False
   randomized_init: True
   init_state_randomization_info:
@@ -27,9 +28,10 @@ task_config:
       low: -0.05
       high: 0.05
   cost: quadratic
-  # inertial_prop:
-  #   - 0.027
-  #   - 1.4e-05
+  inertial_prop:
+    - b_F: 18.112984649321753
+    - a_F: 3.7613154938448576
+    - pitch_rate: 60.00143727772195
   constraints:
     - constraint_form: default_constraint
       constrained_variable: input

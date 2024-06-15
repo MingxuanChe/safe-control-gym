@@ -62,6 +62,7 @@ class GPMPC_ACADOS(GPMPC):
             output_dir: str = 'results/temp',
             compute_ipopt_initial_guess: bool = True,
             use_RTI: bool = False,
+            use_ancillary_gain: bool = False,
             **kwargs
     ):
         
@@ -193,6 +194,7 @@ class GPMPC_ACADOS(GPMPC):
         self.u_prev = None
         self.use_RTI = use_RTI
         self.use_constraints = True
+        self.use_ancillary_gain = use_ancillary_gain
 
         self.setup_prior_dynamics()
         self.setup_acados_model()
@@ -254,7 +256,8 @@ class GPMPC_ACADOS(GPMPC):
         ocp.cost.cost_type = 'LINEAR_LS'
         ocp.cost.cost_type_e = 'LINEAR_LS'
         ocp.cost.W = scipy.linalg.block_diag(self.Q, self.R)
-        ocp.cost.W_e = self.Q
+        # ocp.cost.W_e = self.Q
+        ocp.cost.W_e = self.P
         ocp.cost.Vx = np.zeros((ny, nx))
         ocp.cost.Vx[:nx, :nx] = np.eye(nx)
         ocp.cost.Vu = np.zeros((ny, nu))
@@ -547,6 +550,8 @@ class GPMPC_ACADOS(GPMPC):
         #     print(f"========== acados solver failed with error: {e} =============")
         #     print('using prior controller')
         #     action = self.prior_ctrl.select_action(obs)
+        if self.use_ancillary_gain:
+            action = self.lqr_gain @ (obs - goal_states[:, 0]) + self.U_EQ
 
         return action
  
