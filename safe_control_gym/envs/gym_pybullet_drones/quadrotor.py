@@ -248,8 +248,23 @@ class Quadrotor(BaseAviary):
             self.MASS = inertial_prop[0]
         elif self.QUAD_TYPE == QuadType.TWO_D and np.array(inertial_prop).shape == (2,):
             self.MASS, self.J[1, 1] = inertial_prop
-        elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE and np.array(inertial_prop).shape == (2,):
-            self.MASS, self.J[1, 1] = inertial_prop
+        # elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE and np.array(inertial_prop).shape == (3,):
+        elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
+            if isinstance(inertial_prop, dict):
+                self.B_F = inertial_prop.b_F
+                self.A_F = inertial_prop.a_F
+                self.PITCH_RATE = inertial_prop.pitch_rate
+            elif isinstance(inertial_prop, list):
+                self.B_F, self.A_F, self.PITCH_RATE = \
+                inertial_prop[0].b_F, inertial_prop[1].a_F, inertial_prop[2].pitch_rate
+            # self.MASS, self.J[1, 1] = inertial_prop
+            # self.B_F = 18.112984649321753
+            # self.A_F = 3.7613154938448576
+            # self.PITCH_RATE = 60.00143727772195
+            # self.B_F, self.A_F, self.PITCH_RATE = inertial_prop
+            # self.B_F = inertial_prop[0].b_F
+            # self.A_F = inertial_prop[1].a_F
+            # self.PITCH_RATE = inertial_prop[2].pitch_rate
         elif self.QUAD_TYPE == QuadType.THREE_D and np.array(inertial_prop).shape == (4,):
             self.MASS, self.J[0, 0], self.J[1, 1], self.J[2, 2] = inertial_prop
         elif isinstance(inertial_prop, dict):
@@ -502,12 +517,15 @@ class Quadrotor(BaseAviary):
         Args:
             prior_prop (dict): specify the prior inertial prop to use in the symbolic model.
         '''
-        # if self.QUAD_TYPE is QuadType.TWO_D_ATTITUDE:
-        #     params_pitch_rate =  prior_prop.get('params_pitch_rate', 
-        #     params_acc =
-        # else:
-        m = prior_prop.get('M', self.MASS)
-        Iyy = prior_prop.get('Iyy', self.J[1, 1])
+        if self.QUAD_TYPE is QuadType.TWO_D_ATTITUDE:
+            params_pitch_rate =  prior_prop.get('pitch_rate', self.PITCH_RATE)
+            params_b_F = prior_prop.get('b_F', self.B_F)
+            params_a_F = prior_prop.get('a_F', self.A_F) 
+            m = 0.027
+            Iyy = 1.4e-5
+        else:
+            m = prior_prop.get('M', self.MASS)
+            Iyy = prior_prop.get('Iyy', self.J[1, 1])
             
         g, length = self.GRAVITY_ACC, self.L
         dt = self.CTRL_TIMESTEP
@@ -562,10 +580,10 @@ class Quadrotor(BaseAviary):
             # Define dynamics equations.
             # TODO: create a parameter for the new quad model
             X_dot = cs.vertcat(x_dot,
-                               (18.112984649321753 * T + 3.7613154938448576) * cs.sin(theta),
+                               (params_b_F * T + params_a_F) * cs.sin(theta),
                                z_dot,
-                               (18.112984649321753 * T + 3.7613154938448576) * cs.cos(theta) - g,
-                               -60.00143727772195 * theta + 60.00143727772195 * P)
+                               (params_b_F * T + params_a_F) * cs.cos(theta) - g,
+                               -params_pitch_rate * theta + params_pitch_rate * P)
             # Define observation.
             Y = cs.vertcat(x, x_dot, z, z_dot, theta)
         elif self.QUAD_TYPE == QuadType.THREE_D:
