@@ -911,12 +911,12 @@ class GPMPC(MPC):
         '''Loads a pretrained batch GP model.        Args:
             model_path (str): Path to the pretrained model.
         '''
-        
-        if not self.parallel:
-            raise ValueError('load function only works with parallel GP models.')
         data = np.load(f'{model_path}/data.npz')
-        gp_model_path = f'{model_path}/best_model.pth'
-        self.train_gp(input_data=data['data_inputs'], target_data=data['data_targets'], gp_model=gp_model_path)
+        if self.parallel:
+            gp_model_path = f'{model_path}/best_model.pth'
+            self.train_gp(input_data=data['data_inputs'], target_data=data['data_targets'], gp_model=gp_model_path)
+        else:
+            self.train_gp(input_data=data['data_inputs'], target_data=data['data_targets'], gp_model=model_path)
         print('================== GP models loaded. =================')
         
     def learn(self, env=None):
