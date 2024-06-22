@@ -4,7 +4,7 @@ algo_config:
   q_lqr: [1, 0.1, 1, 0.1, 1.0]
   r_lqr: [0.5, 0.5]
   gp_model_path: null
-  gp_model_path: /home/mingxuan/Repositories/scg_mx/ilqr_contraction/ilqr_c/ilqr_gp/results
+  # gp_model_path: /home/mingxuan/Repositories/scg_mx/ilqr_contraction/ilqr_c/ilqr_gp/results
   # Model arguments
   # Note: Higher simulation frequency is required if using controller designed
   #       based on the continuous-time model
@@ -29,7 +29,7 @@ algo_config:
         # pitch_rate: 20
   # num_epochs: 1
   num_epochs: 2
-  num_samples: 100
+  num_samples: 50
   # normalize_training_data: true
   same_train_initial_state: True
   same_test_initial_state: true
@@ -43,6 +43,7 @@ algo_config:
   # target_mask: null
   # input_mask: [4, 6]
   # target_mask: [4]
+  target_mask: [1, 3, 4]
   learning_rate: 
     - 0.01
     - 0.01

@@ -128,9 +128,14 @@ class iLQR_C(LQR):
         objective = cp.Minimize(chi * d_bar / alpha)
         constraints = [chi*np.identity(nx) - W_tilde >> 0,
                     W_tilde - np.identity(nx) >> 0,]
-        for i in range(self.N):
-            constraints += [ - W_tilde @ J_ref[i].T - J_ref[i] @ W_tilde - 2 * alpha * W_tilde
-                            >> 1e-6*np.identity(nx)]
+        if grid_search == False:
+            for i in range(self.N):
+                constraints += [ - W_tilde @ J_ref[i].T - J_ref[i] @ W_tilde - 2 * alpha * W_tilde
+                                >> 1e-6*np.identity(nx)]
+        else:
+            for i in range(N_grid**3):
+                constraints += [ - W_tilde @ J_ref[i].T - J_ref[i] @ W_tilde - 2 * alpha * W_tilde
+                                >> 1e-6*np.identity(nx)]
         prob = cp.Problem(objective, constraints)
         result = prob.solve(solver=cp.MOSEK, warm_start=True)
         # print('result:', result)
@@ -149,7 +154,11 @@ class iLQR_C(LQR):
         Returns:
             action (ndarray): The action chosen by the controller.
         '''
-
+        # print('self.model.quad_mass:', self.model.quad_mass)
+        # print('self.model.quad_Iyy:', self.model.quad_Iyy)
+        # print('self.model:', self.model.__dir__())
+        # print(self.env_func().__dir__())
+        # exit()
         # step = self.extract_step(info)
         # self.goal_state = self.env.X_GOAL[self.traj_step]
         self.goal_state = self.get_references()
@@ -183,6 +192,10 @@ class iLQR_C(LQR):
             action = -gain @ (obs - x_0) + u_0
 
         # print('self.traj_step:', self.traj_step)
+        action_bound_high = [ 0.4767, 0.4]
+        action_bound_low = [ 0.079, -0.4]
+        action = np.clip(action, action_bound_low, action_bound_high)
+        # print('action:', action)
         return action
         pass
             # return -self.gain @ (obs - self.env.X_GOAL[step]) + self.model.U_EQ

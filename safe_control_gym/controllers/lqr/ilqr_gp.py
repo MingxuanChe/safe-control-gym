@@ -58,6 +58,7 @@ class iLQR_GP(iLQR_C):
         if prior_info is None or prior_info == {}:
             raise ValueError('ilqr GP requires prior_prop to be defined. You may use the real mass properties and then use prior_param_coeff to modify them accordingly.')
         prior_info['prior_prop'].update((prop, val * prior_param_coeff) for prop, val in prior_info['prior_prop'].items())
+        print('Prior properties:', prior_info['prior_prop'])
         self.prior_env_func = partial(env_func, inertial_prop=prior_info['prior_prop'])
 
         # Initialize the method using linear MPC.
@@ -202,10 +203,10 @@ class iLQR_GP(iLQR_C):
             A_gp = dmu_gp.T[:, :nx]
             B_gp = dmu_gp.T[:, nx:]
         else:
-            for gp_idx in self.target_mask:
+            for idx, gp_idx in enumerate(self.target_mask):
                 # dmu should be of shape (input_length, 1)
-                A_gp[gp_idx, :] = dmu_gp.T[:, :nx]
-                B_gp[gp_idx, :] = dmu_gp.T[:, nx:]
+                A_gp[gp_idx, :] = dmu_gp.T[:, :nx][idx, :]
+                B_gp[gp_idx, :] = dmu_gp.T[:, nx:][idx, :]
 
         # print('A_gp:', A_gp)
         # print('B_gp:', B_gp)
@@ -222,20 +223,47 @@ class iLQR_GP(iLQR_C):
         return A_cl
     
     def compute_CM(self, alpha, d_bar):
-        J_ref = [self.get_cl_jacobian(self.env.X_GOAL[i], self.model.U_EQ)
-                for i in range(self.N)]
+        # grid_search = True
+        grid_search = False
+        N_grid = 5
+        x_dot_search_range  = np.array([-1.25, 1.25])
+        z_dot_search_range  = np.array([-1, 1])
+        theta_search_range = np.array([-0.25, 0.25])
+        x_dot_search_space = np.linspace(x_dot_search_range[0], x_dot_search_range[1], N_grid)
+        z_dot_search_space = np.linspace(z_dot_search_range[0], z_dot_search_range[1], N_grid)
+        theta_search_space = np.linspace(theta_search_range[0], theta_search_range[1], N_grid)
+
+        if grid_search == False:          
+            J_ref = [self.get_cl_jacobian(self.env.X_GOAL[i], self.model.U_EQ)
+                    for i in range(self.N)]
+        else:
+            J_ref = []
+            for i in range(N_grid):
+                for j in range(N_grid):
+                    for k in range(N_grid):
+                        x_dot = x_dot_search_space[i]
+                        z_dot = z_dot_search_space[j]
+                        theta = theta_search_space[k]
+                        x = np.array([0, x_dot, 0, z_dot, theta])
+                        u = self.model.U_EQ
+                        J_ref.append(self.get_cl_jacobian(x, u))
         nx = self.model.nx
         chi = cp.Variable(nonneg=True)
         W_tilde = cp.Variable((nx, nx), symmetric=True)
         objective = cp.Minimize(chi * d_bar / alpha)
         constraints = [chi*np.identity(nx) - W_tilde >> 0,
                     W_tilde - np.identity(nx) >> 0,]
-        for i in range(self.N):
-            constraints += [ - W_tilde @ J_ref[i].T - J_ref[i] @ W_tilde - 2 * alpha * W_tilde
-                            >> 1e-6*np.identity(nx)]
+        if grid_search == False:
+            for i in range(self.N):
+                constraints += [ - W_tilde @ J_ref[i].T - J_ref[i] @ W_tilde - 2 * alpha * W_tilde
+                                >> 1e-6*np.identity(nx)]
+        else:
+            for i in range(N_grid**3):
+                constraints += [ - W_tilde @ J_ref[i].T - J_ref[i] @ W_tilde - 2 * alpha * W_tilde
+                                >> 1e-6*np.identity(nx)]
         prob = cp.Problem(objective, constraints)
         result = prob.solve(solver=cp.MOSEK, warm_start=True)
-        # print('result:', result)
+        print('result:', result)
         min_bound = d_bar / alpha * np.sqrt(chi.value)
         M = np.linalg.inv(W_tilde.value)
         return result, M, chi.value, min_bound
@@ -281,10 +309,11 @@ class iLQR_GP(iLQR_C):
             A_gp = dmu_gp.T[:, :nx]
             B_gp = dmu_gp.T[:, nx:]
         else:
-            for gp_idx in self.target_mask:
+            # for gp_idx in self.target_mask:
+            for idx, gp_idx in enumerate(self.target_mask):
                 # dmu should be of shape (input_length, 1)
-                A_gp[gp_idx, :] = dmu_gp.T[:, :nx]
-                B_gp[gp_idx, :] = dmu_gp.T[:, nx:]
+                A_gp[gp_idx, :] = dmu_gp.T[:, :nx][idx, :]
+                B_gp[gp_idx, :] = dmu_gp.T[:, nx:][idx, :]
 
         # print('A_gp:', A_gp)
         # print('B_gp:', B_gp)
@@ -300,6 +329,11 @@ class iLQR_GP(iLQR_C):
         eigenv = np.linalg.eigvals(A_cl)
         # print('eigenv:', eigenv)
         action = -gain @ (obs - x_0) + u_0
+
+        action_bound_high = [ 0.4767, 0.4]
+        action_bound_low = [ 0.079, -0.4]
+        action = np.clip(action, action_bound_low, action_bound_high)
+        # print('action:', action)
 
         # print('obs:', obs)
         # print('x_0:', x_0)
@@ -615,6 +649,10 @@ class iLQR_GP(iLQR_C):
             # Otherwise, just copy the training data into the test data.
             train_idx = list(range(total_input_data))
             test_idx = list(range(total_input_data))
+
+        target_norm = np.linalg.norm(train_targets, axis=0)
+        max_target_norm = np.max(target_norm)
+        print('Max target norm:', max_target_norm)
 
         train_inputs = self.data_inputs[train_idx, :]
         train_targets = self.data_targets[train_idx, :]
