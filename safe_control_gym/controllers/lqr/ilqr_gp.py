@@ -9,6 +9,7 @@ from functools import partial
 import casadi as cs
 import gpytorch
 import numpy as np
+import cvxpy as cp
 import scipy
 import torch
 from sklearn.metrics import pairwise_distances_argmin_min
@@ -50,6 +51,7 @@ class iLQR_GP(iLQR_C):
             output_dir: str = 'results/temp',
             kernel: str = 'RBF',
             parallel: bool = False,
+            optimal_reference_path: str = None,
             **kwargs
     ):
         
@@ -66,7 +68,9 @@ class iLQR_GP(iLQR_C):
             prior_info=prior_info,
             # runner args
             # shared/base args
+            CM_search=False, # do not perform CM search directly in the prior controller
             output_dir=output_dir,
+            optimal_reference_path=optimal_reference_path,
         )
         self.prior_ctrl.reset()
         # super().__init__() # TODO: check the inheritance of the class
@@ -76,7 +80,7 @@ class iLQR_GP(iLQR_C):
             horizon = horizon,
             q_lqr= q_lqr,
             r_lqr = r_lqr,
-            CM_search= CM_search,
+            CM_search= False,
             train_iterations = train_iterations,
             test_data_ratio = test_data_ratio,
             overwrite_saved_data = overwrite_saved_data,
@@ -93,6 +97,7 @@ class iLQR_GP(iLQR_C):
             prior_param_coeff = prior_param_coeff,
             terminate_run_on_done = terminate_run_on_done,
             output_dir = output_dir,
+            optimal_reference_path=optimal_reference_path,
             **kwargs)
         # self.prior_ctrl.reset()
         # # Setup environments.
@@ -128,8 +133,15 @@ class iLQR_GP(iLQR_C):
         self.Bd = Bd[:, self.target_mask]
         self.parallel = parallel
         self.kernel = kernel
-
+        self.CM_search = CM_search
+        self.optimal_reference_path = optimal_reference_path
         self.setup_prior_dynamics()
+        # if self.CM_search:
+        #     if self.gaussian_process is None:
+        #         self.prior_ctrl.line_search_for_CM()
+        #     else:
+        #         print('CM search with GP')
+        #         self.line_search_for_CM()
 
     def setup_prior_dynamics(self):
         self.prior_ctrl.set_dynamics_func()
@@ -137,27 +149,96 @@ class iLQR_GP(iLQR_C):
     def setup_dynamics(self):
         pass
 
-    #     self.model.x_sym
-    #     self.model.u_sym
+    def line_search_for_CM(self, d_bar=1.0):
+        print('CM search with GP')
+        alpha = self.alpha_range[0]
+        # total search steps
+        Na = int((self.alpha_range[1] - self.alpha_range[0]) /self.alpha_step)+1
+        print("========================================================")
+        print("============= LINE SEARCH OF OPTIMAL ALPHA =============")
+        print("========================================================")
+        result_prev = np.Inf
+        M_prev = None
+        chi_prev = None
+        for i in range(Na):
+            result, M, chi, min_bound = self.compute_CM(alpha=alpha,
+                                            d_bar=d_bar)
+            print("Optimal value: Jcv =","{:.2f}".format(result),
+                  "( alpha =","{:.3f}".format(alpha),
+                    ", min_bound =","{:.3f}".format(min_bound),
+                  ")")
+            if result_prev <= result:
+                alpha -= self.alpha_step
+                self.result = result_prev
+                self.M = M_prev
+                self.chi = chi_prev
+                break
+            alpha += self.alpha_step
+            # save the previous result
+            result_prev = result
+            M_prev = M
+            chi_prev = chi
+        self.alpha_opt = alpha
+        print("Optimal contraction rate: alpha =","{:.3f}".format(alpha))
+        print("Minimum bound: min_bound =","{:.3f}".format(min_bound))
+        print("========================================================")
+        print("=========== LINE SEARCH OF OPTIMAL ALPHA END ===========")
+        print("========================================================\n\n")
+        self.min_bound = d_bar / self.alpha_opt * np.sqrt(self.chi)
 
+    def get_cl_jacobian(self, x_lin, u_lin):
+        nx = self.model.nx
+        nu = self.model.nu
+        df = self.prior_ctrl.model.df_func(x_lin, u_lin)
+        A_prior, B_prior = df[0].toarray(), df[1].toarray()
+        z = np.concatenate([x_lin, u_lin])
+        z = z[self.input_mask]
+        # A_gp = self.gaussian_process.casadi_linearized_predict(z=z)['A']
+        # B_gp = self.gaussian_process.casadi_linearized_predict(z=z)['B']
+        dmu_gp = self.gaussian_process.casadi_linearized_predict(z=z)['mean']
+        A_gp = np.zeros((nx, nx))
+        B_gp = np.zeros((nx, nu))
+        if len(self.target_mask) == nx:
+            A_gp = dmu_gp.T[:, :nx]
+            B_gp = dmu_gp.T[:, nx:]
+        else:
+            for gp_idx in self.target_mask:
+                # dmu should be of shape (input_length, 1)
+                A_gp[gp_idx, :] = dmu_gp.T[:, :nx]
+                B_gp[gp_idx, :] = dmu_gp.T[:, nx:]
 
-    #     A_lin = self.discrete_dfdx
-    #     B_lin = self.discrete_dfdu
-
-    #     if self.gaussian_process is None:
-    #         f_disc = self.prior_dynamics_func(x0=acados_model.x- self.prior_ctrl.X_EQ[:, None], 
-    #                                           p=acados_model.u- self.prior_ctrl.U_EQ[:, None])['xf'] \
-    #             + self.prior_ctrl.X_EQ[:, None]
-    #     else:
-    #         z = cs.vertcat(acados_model.x, acados_model.u) # GP prediction point
-    #         z = z[self.input_mask]
-    #         if self.sparse_gp:
-    #             raise NotImplementedError('Sparse GP not implemented for acados.')
-    #         else:
-    #             f_disc = self.prior_dynamics_func(x0=acados_model.x- self.prior_ctrl.X_EQ[:, None], 
-    #                                               p=acados_model.u- self.prior_ctrl.U_EQ[:, None])['xf'] \
-    #             + self.prior_ctrl.X_EQ[:, None]
-    #             + self.Bd @ self.gaussian_process.casadi_predict(z=z)['mean']
+        # print('A_gp:', A_gp)
+        # print('B_gp:', B_gp)
+        assert A_gp.shape == (self.model.nx, self.model.nx)
+        assert B_gp.shape == (self.model.nx, self.model.nu)
+        A = A_prior + A_gp
+        B = B_prior + B_gp
+        # print('A:', A)
+        # print('B:', B)
+        P = scipy.linalg.solve_continuous_are(A, B, self.Q, self.R)
+        gain = np.dot(np.linalg.inv(self.R), np.dot(B.T, P))
+        A_cl = A - B @ gain
+        A_cl = A_cl.full() if isinstance(A_cl, cs.DM) else A_cl # convert to numpy array
+        return A_cl
+    
+    def compute_CM(self, alpha, d_bar):
+        J_ref = [self.get_cl_jacobian(self.env.X_GOAL[i], self.model.U_EQ)
+                for i in range(self.N)]
+        nx = self.model.nx
+        chi = cp.Variable(nonneg=True)
+        W_tilde = cp.Variable((nx, nx), symmetric=True)
+        objective = cp.Minimize(chi * d_bar / alpha)
+        constraints = [chi*np.identity(nx) - W_tilde >> 0,
+                    W_tilde - np.identity(nx) >> 0,]
+        for i in range(self.N):
+            constraints += [ - W_tilde @ J_ref[i].T - J_ref[i] @ W_tilde - 2 * alpha * W_tilde
+                            >> 1e-6*np.identity(nx)]
+        prob = cp.Problem(objective, constraints)
+        result = prob.solve(solver=cp.MOSEK, warm_start=True)
+        # print('result:', result)
+        min_bound = d_bar / alpha * np.sqrt(chi.value)
+        M = np.linalg.inv(W_tilde.value)
+        return result, M, chi.value, min_bound
 
     def select_action(self, obs, info=None):
         # print('current obs:', obs)
@@ -179,30 +260,52 @@ class iLQR_GP(iLQR_C):
         if self.mode == 'tracking' or self.env.TASK == Task.TRAJ_TRACKING:
             self.traj_step += 1
         # linearization point
-        x_0 = self.goal_state[:, 0]
-        u_0 = self.model.U_EQ
-        print('x_0:', x_0)
-        print('u_0:', u_0)
+        if self.optimal_reference_path is None:
+            x_0 = self.goal_state[:, 0]
+            # print('x_0:', x_0)
+            u_0 = self.model.U_EQ
+        else:
+            x_0 = self.goal_state[:self.model.nx, 0]
+            u_0 = self.goal_state[self.model.nx:, 0]
         # linearize the prior dynamics
         df = self.prior_ctrl.model.df_func(x_0, u_0)
         A_prior, B_prior = df[0].toarray(), df[1].toarray()
         z = np.concatenate([x_0, u_0])
-        A_gp = self.gaussian_process.casadi_linearized_predict(z=z)['A']
-        B_gp = self.gaussian_process.casadi_linearized_predict(z=z)['B']
-        print('A_gp:', A_gp)
-        print('B_gp:', B_gp)
+        z = z[self.input_mask]
+        # A_gp = self.gaussian_process.casadi_linearized_predict(z=z)['A']
+        # B_gp = self.gaussian_process.casadi_linearized_predict(z=z)['B']
+        dmu_gp = self.gaussian_process.casadi_linearized_predict(z=z)['mean']
+        A_gp = np.zeros((nx, nx))
+        B_gp = np.zeros((nx, nu))
+        if len(self.target_mask) == nx:
+            A_gp = dmu_gp.T[:, :nx]
+            B_gp = dmu_gp.T[:, nx:]
+        else:
+            for gp_idx in self.target_mask:
+                # dmu should be of shape (input_length, 1)
+                A_gp[gp_idx, :] = dmu_gp.T[:, :nx]
+                B_gp[gp_idx, :] = dmu_gp.T[:, nx:]
+
+        # print('A_gp:', A_gp)
+        # print('B_gp:', B_gp)
         assert A_gp.shape == (self.model.nx, self.model.nx)
         assert B_gp.shape == (self.model.nx, self.model.nu)
         A = A_prior + A_gp
         B = B_prior + B_gp
-        print('A:', A)
-        print('B:', B)
+        # print('A:', A)
+        # print('B:', B)
         P = scipy.linalg.solve_continuous_are(A, B, self.Q, self.R)
         gain = np.dot(np.linalg.inv(self.R), np.dot(B.T, P))
         A_cl = A - B @ gain
         eigenv = np.linalg.eigvals(A_cl)
-        print('eigenv:', eigenv)
+        # print('eigenv:', eigenv)
         action = -gain @ (obs - x_0) + u_0
+
+        # print('obs:', obs)
+        # print('x_0:', x_0)
+        # print('u_0:', u_0)
+        # print('action:', action)
+        # input('Press Enter to continue...')
         # pass
         return action
  
@@ -215,7 +318,17 @@ class iLQR_GP(iLQR_C):
             self.x_goal = self.env.X_GOAL
         elif self.env.TASK == Task.TRAJ_TRACKING:
             self.mode = 'tracking'
-            self.traj = self.env.X_GOAL.T
+            if self.optimal_reference_path is None:
+                self.traj = self.env.X_GOAL.T
+            else:
+                print('Loading optimal reference path:', self.optimal_reference_path)
+                self.traj_load = np.load(self.optimal_reference_path, allow_pickle=True)
+                x_ref = self.traj_load['trajs_data']['obs'][0].T
+                u_ref = self.traj_load['trajs_data']['action'][0].T
+                self.traj = np.concatenate([x_ref[:, :-1], u_ref], axis=0)
+                self.x_ref = x_ref
+                self.u_ref = u_ref
+                print('Optimal reference loaded.')
             self.traj_step = 0
         # Dynamics model.
         print('=========== Resetting prior controller ===========')
@@ -303,6 +416,9 @@ class iLQR_GP(iLQR_C):
         self.train_runs = train_runs
         self.test_runs = test_runs
 
+        # if self.CM_search:
+        #     self.line_search_for_CM()
+
         return train_runs, test_runs
     
     def gather_training_samples(self, all_runs, epoch_i, num_samples, rand_generator=None):
@@ -314,17 +430,24 @@ class iLQR_GP(iLQR_C):
         for episode_i in range(n_episodes):
             run_results_int = all_runs[epoch_i][episode_i]
             n = run_results_int['action'].shape[0]
-            if num_samples_per_episode < n:
-                if rand_generator is not None:
-                    rand_inds_int = rand_generator.choice(n - 1, num_samples_per_episode, replace=False)
-                else:
-                    rand_inds_int = np.arange(num_samples_per_episode)
+            if self.uniform_data_selection:
+                # down sample the x_seq and etc to the desired number of samples
+                down_sample_inds = np.linspace(0, n - 1, num_samples_per_episode, dtype=int)
+                x_seq_int.append(run_results_int.obs[down_sample_inds, :])
+                actions_int.append(run_results_int.action[down_sample_inds, :])
+                x_next_seq_int.append(run_results_int.obs[down_sample_inds + 1, :])
             else:
-                rand_inds_int = np.arange(n - 1)
-            next_inds_int = rand_inds_int + 1
-            x_seq_int.append(run_results_int.obs[rand_inds_int, :])
-            actions_int.append(run_results_int.action[rand_inds_int, :])
-            x_next_seq_int.append(run_results_int.obs[next_inds_int, :])
+                if num_samples_per_episode < n:
+                    if rand_generator is not None:
+                        rand_inds_int = rand_generator.choice(n - 1, num_samples_per_episode, replace=False)
+                    else:
+                        rand_inds_int = np.arange(num_samples_per_episode)
+                else:
+                    rand_inds_int = np.arange(n - 1)
+                next_inds_int = rand_inds_int + 1
+                x_seq_int.append(run_results_int.obs[rand_inds_int, :])
+                actions_int.append(run_results_int.action[rand_inds_int, :])
+                x_next_seq_int.append(run_results_int.obs[next_inds_int, :])
         x_seq_int = np.vstack(x_seq_int)
         actions_int = np.vstack(actions_int)
         x_next_seq_int = np.vstack(x_next_seq_int)
@@ -356,6 +479,23 @@ class iLQR_GP(iLQR_C):
         targets = (x_dot_seq.T - (x_pred_seq)).transpose()  # (N, nx).
         # check whether target is close to zero
         # print('target:', targets)
+        delta_list = []
+        # check_target_data = True
+        check_target_data = False
+        if check_target_data:
+            model_func = self.prior_ctrl.model.fc_func
+            true_dynamics = self.env_func(gui=False).symbolic.fc_func
+            for i in range(x_seq.shape[0]):
+                delta = true_dynamics(x_seq[i, :], u_seq[i, :]).full().flatten() - \
+                                  - model_func(x_seq[i, :], u_seq[i, :]).full().flatten()
+                delta_list.append(delta[self.target_mask])
+            delta = np.array(delta_list)
+            import matplotlib.pyplot as plt
+            plt.plot(delta, label='delta', color='r', linestyle='--')
+            plt.plot(targets[:, self.target_mask], label='targets')
+            # print('targets.shape:', targets.shape)
+            plt.legend()
+            plt.show()
         # exit()
         inputs = np.hstack([x_seq, u_seq])  # (N, nx+nu).
         return inputs, targets
@@ -364,6 +504,7 @@ class iLQR_GP(iLQR_C):
                  input_data=None,
                  target_data=None,
                  gp_model=None,
+                #  load_hardware_data = False,
                  overwrite_saved_data: bool = None,
                  ):
         '''Performs GP training.
@@ -438,6 +579,17 @@ class iLQR_GP(iLQR_C):
             train_targets = np.vstack(train_targets)
             self.data_inputs = train_inputs
             self.data_targets = train_targets
+
+        # elif load_hardware_data and input_data is not None and target_data is not None:
+        #     train_inputs = input_data
+        #     train_targets = target_data
+        #     if (self.data_inputs is None and self.data_targets is None) or overwrite_saved_data:
+        #         self.data_inputs = train_inputs
+        #         self.data_targets = train_targets
+        #     else:
+        #         self.data_inputs = np.vstack((self.data_inputs, train_inputs))
+        #         self.data_targets = np.vstack((self.data_targets, train_targets))
+
         elif input_data is not None and target_data is not None:
             train_inputs = input_data
             train_targets = target_data
@@ -476,19 +628,7 @@ class iLQR_GP(iLQR_C):
         test_inputs_tensor = torch.Tensor(test_inputs).double()
         test_targets_tensor = torch.Tensor(test_targets).double()
 
-        # Define likelihood.
-        # likelihood = gpytorch.likelihoods.GaussianLikelihood(
-        #     noise_constraint=gpytorch.constraints.GreaterThan(1e-6),
-        # ).double()
-        # self.gaussian_process = GaussianProcessCollection(ZeroMeanIndependentGPModel,
-        #                                                   likelihood,
-        #                                                   len(self.target_mask),
-        #                                                   input_mask=self.input_mask,
-        #                                                   target_mask=self.target_mask,
-        #                                                   normalize=self.normalize_training_data,
-        #                                                   kernel=self.kernel,
-        #                                                   parallel=self.parallel
-        #                                                   )
+
         if self.parallel:
             likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_shape=torch.Size([len(self.target_mask)]),
                                                                  noise_constraint=gpytorch.constraints.GreaterThan(1e-6)).double()
@@ -519,8 +659,8 @@ class iLQR_GP(iLQR_C):
                                         learning_rate=self.learning_rate,
                                         gpu=self.use_gpu,
                                         output_dir=self.output_dir)
-        self.gaussian_process.plot_trained_gp(train_inputs_tensor,
-                                                train_targets_tensor,)
+        # self.gaussian_process.plot_trained_gp(train_inputs_tensor,
+        #                                         train_targets_tensor,)
                                                 
         self.reset()
         self.prior_ctrl.reset()

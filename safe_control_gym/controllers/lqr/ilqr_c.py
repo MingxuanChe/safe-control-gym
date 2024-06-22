@@ -6,9 +6,11 @@ from termcolor import colored
 from safe_control_gym.controllers.base_controller import BaseController
 from safe_control_gym.controllers.lqr.lqr_utils import (compute_lqr_gain, discretize_linear_system,
                                                         get_cost_weight_matrix)
+from safe_control_gym.controllers.mpc.mpc_utils import compute_state_rmse
 from safe_control_gym.controllers.lqr.lqr import LQR
 from safe_control_gym.envs.benchmark_env import Task
 
+from copy import deepcopy
 
 class iLQR_C(LQR):
     def __init__(self, env_func, 
@@ -16,14 +18,14 @@ class iLQR_C(LQR):
                  r_lqr: list = None, 
                  discrete_dynamics: bool = True,
                  CM_search: bool = False, 
+                 optimal_reference_path: str = None,
                  **kwargs):
         super().__init__(env_func, q_lqr, r_lqr, discrete_dynamics, **kwargs)
 
         self.env = env_func()
         # Controller params.
         self.model = self.get_prior(self.env)
-        print('self.model:', self.model)
-
+        # print('self.model:', self.model)
 
         # self.discrete_dynamics = discrete_dynamics # not used since we are using continuous dynamics
         self.Q = get_cost_weight_matrix(q_lqr, self.model.nx)
@@ -35,10 +37,18 @@ class iLQR_C(LQR):
         self.N = int(self.total_time/self.dt) # number of timesteps
         self.T = 1 # MPC like horizon, only for get_references()
         
+        self.optimal_reference_path = optimal_reference_path
         self.alpha_range = [0.1, 5.0]
         self.alpha_step = 0.1
         if CM_search:
             self.line_search_for_CM()
+        self.x_ref = None
+        self.u_ref = None
+
+        
+    def set_dynamics_func(self):
+        # continuous-time dynamics
+        self.dynamics_func = self.model.fc_func
 
     def get_cl_jacobian(self, x_lin, u_lin):
         '''Get the Jacobian of the closed-loop dynamics.'''
@@ -48,6 +58,7 @@ class iLQR_C(LQR):
         P = scipy.linalg.solve_continuous_are(A, B, self.Q, self.R)
         K = np.dot(np.linalg.inv(self.R), np.dot(B.T, P))
         J_cl = A - B @ K
+        J_cl = np.array(J_cl)
         return J_cl
 
     def line_search_for_CM(self, d_bar=1.0):
@@ -88,8 +99,29 @@ class iLQR_C(LQR):
 
 
     def compute_CM(self, alpha, d_bar):
-        J_ref = [self.get_cl_jacobian(self.env.X_GOAL[i], self.model.U_EQ)
-                for i in range(self.N)]
+        grid_search = True
+        N_grid = 10
+        x_dot_search_range  = np.array([-1, 1])
+        z_dot_search_range  = np.array([-1, 1])
+        theta_search_range = np.array([-0.3, 0.3])
+        x_dot_search_space = np.linspace(x_dot_search_range[0], x_dot_search_range[1], N_grid)
+        z_dot_search_space = np.linspace(z_dot_search_range[0], z_dot_search_range[1], N_grid)
+        theta_search_space = np.linspace(theta_search_range[0], theta_search_range[1], N_grid)
+
+        if grid_search == False:          
+            J_ref = [self.get_cl_jacobian(self.env.X_GOAL[i], self.model.U_EQ)
+                    for i in range(self.N)]
+        else:
+            J_ref = []
+            for i in range(N_grid):
+                for j in range(N_grid):
+                    for k in range(N_grid):
+                        x_dot = x_dot_search_space[i]
+                        z_dot = z_dot_search_space[j]
+                        theta = theta_search_space[k]
+                        x = np.array([0, x_dot, 0, z_dot, theta])
+                        u = self.model.U_EQ
+                        J_ref.append(self.get_cl_jacobian(x, u))
         nx = self.model.nx
         chi = cp.Variable(nonneg=True)
         W_tilde = cp.Variable((nx, nx), symmetric=True)
@@ -130,9 +162,15 @@ class iLQR_C(LQR):
             # get the liearzation points
             # x_0 = self.env.X_GOAL[step]
             # x_0 = self.env.X_GOAL[self.traj_step]
-            x_0 = self.goal_state[:, 0]
+            if self.optimal_reference_path is None:
+                x_0 = self.goal_state[:, 0]
+                # print('x_0:', x_0)
+                u_0 = self.model.U_EQ
+            else:
+                x_0 = self.goal_state[:self.model.nx, 0]
+                u_0 = self.goal_state[self.model.nx:, 0]
             # print('x_0:', x_0)
-            u_0 = self.model.U_EQ
+            # print('u_0:', u_0)
             # Linearize continuous-time dynamics
             df = self.model.df_func(x_0, u_0)
             A, B = df[0].toarray(), df[1].toarray()
@@ -173,11 +211,138 @@ class iLQR_C(LQR):
     def reset(self):
         '''Prepares for evaluation.'''
         self.env.reset()
+        self.set_dynamics_func()
         if self.env.TASK == Task.TRAJ_TRACKING:
             self.mode = 'tracking'
-            self.traj = self.env.X_GOAL.T
+            if self.optimal_reference_path is None:
+                self.traj = self.env.X_GOAL.T
+            else:
+                print('Loading optimal reference path:', self.optimal_reference_path)
+                self.traj_load = np.load(self.optimal_reference_path, allow_pickle=True)
+                x_ref = self.traj_load['trajs_data']['obs'][0].T
+                u_ref = self.traj_load['trajs_data']['action'][0].T
+                self.traj = np.concatenate([x_ref[:, :-1], u_ref], axis=0)
+                self.x_ref = x_ref
+                self.u_ref = u_ref
+                print('Optimal reference loaded.')
             self.traj_step = 0
 
     def close(self):
         '''Cleans up resources.'''
         self.env.close()
+
+    def run(self,
+            env=None,
+            render=False,
+            logging=False,
+            max_steps=None,
+            terminate_run_on_done=None
+            ):
+        '''Runs evaluation with current policy.
+
+        Args:
+            render (bool): if to do real-time rendering.
+            logging (bool): if to log on terminal.
+
+        Returns:
+            dict: evaluation statisitcs, rendered frames.
+        '''
+        if env is None:
+            env = self.env
+        if terminate_run_on_done is None:
+            terminate_run_on_done = self.terminate_run_on_done
+
+        self.x_prev = None
+        self.u_prev = None
+        if not env.initial_reset:
+            env.set_cost_function_param(self.Q, self.R)
+        obs, info = env.reset()
+        # obs = env.reset()
+        # print('Init State:')
+        # print(obs)
+        ep_returns, ep_lengths = [], []
+        frames = []
+        self.setup_results_dict()
+        self.results_dict['obs'].append(obs)
+        self.results_dict['state'].append(env.state)
+        i = 0
+        if env.TASK == Task.STABILIZATION:
+            if max_steps is None:
+                MAX_STEPS = int(env.CTRL_FREQ * env.EPISODE_LEN_SEC)
+            else:
+                MAX_STEPS = max_steps
+        elif env.TASK == Task.TRAJ_TRACKING:
+            if max_steps is None:
+                MAX_STEPS = self.traj.shape[1] - 1 #TODO: why I have to subtract 1?
+                # print('MAX_STEPS:', MAX_STEPS)
+            else:
+                MAX_STEPS = max_steps
+        else:
+            raise Exception('Undefined Task')
+        self.terminate_loop = False
+        done = False
+        common_metric = 0
+        while not (done and terminate_run_on_done) and i < MAX_STEPS and not (self.terminate_loop):
+            action = self.select_action(obs)
+            if self.terminate_loop:
+                print('Infeasible MPC Problem')
+                break
+            # Repeat input for more efficient control.
+            obs, reward, done, info = env.step(action)
+            self.results_dict['obs'].append(obs)
+            self.results_dict['reward'].append(reward)
+            self.results_dict['done'].append(done)
+            self.results_dict['info'].append(info)
+            self.results_dict['action'].append(action)
+            self.results_dict['state'].append(env.state)
+            self.results_dict['state_mse'].append(info['mse'])
+            # self.results_dict['state_error'].append(env.state - env.X_GOAL[i,:])
+
+            common_metric += info['mse']
+            # print(i, '-th step.')
+            # print('action:', action)
+            # print('obs', obs)
+            if render:
+                env.render()
+                frames.append(env.render('rgb_array'))
+            i += 1
+        # Collect evaluation results.
+        ep_lengths = np.asarray(ep_lengths)
+        ep_returns = np.asarray(ep_returns)
+        if logging:
+            msg = '****** Evaluation ******\n'
+            msg += 'eval_ep_length {:.2f} +/- {:.2f} | eval_ep_return {:.3f} +/- {:.3f}\n'.format(
+                ep_lengths.mean(), ep_lengths.std(), ep_returns.mean(),
+                ep_returns.std())
+        if len(frames) != 0:
+            self.results_dict['frames'] = frames
+        self.results_dict['obs'] = np.vstack(self.results_dict['obs'])
+        self.results_dict['state'] = np.vstack(self.results_dict['state'])
+        try:
+            self.results_dict['reward'] = np.vstack(self.results_dict['reward'])
+            self.results_dict['action'] = np.vstack(self.results_dict['action'])
+            self.results_dict['full_traj_common_cost'] = common_metric
+            self.results_dict['total_rmse_state_error'] = compute_state_rmse(self.results_dict['state'])
+            self.results_dict['total_rmse_obs_error'] = compute_state_rmse(self.results_dict['obs'])
+        except ValueError:
+            raise Exception('[ERROR] mpc.run().py: MPC could not find a solution for the first step given the initial conditions. '
+                            'Check to make sure initial conditions are feasible.')
+        return deepcopy(self.results_dict)
+
+    def setup_results_dict(self):
+        '''Setup the results dictionary to store run information.'''
+        self.results_dict = {'obs': [],
+                             'reward': [],
+                             'done': [],
+                             'info': [],
+                             'action': [],
+                             'horizon_inputs': [],
+                             'horizon_states': [],
+                             'goal_states': [],
+                             'frames': [],
+                             'state_mse': [],
+                             'common_cost': [],
+                             'state': [],
+                             'state_error': [],
+                             't_wall': []
+                             }

@@ -69,3 +69,7 @@ register(idx='gpmpc_acados',
 register(idx='ilqr_c',
         entry_point='safe_control_gym.controllers.lqr.ilqr_c:iLQR_C',
         config_entry_point='safe_control_gym.controllers.lqr:ilqr_c.yaml')
+
+register(idx='ilqr_gp',
+        entry_point='safe_control_gym.controllers.lqr.ilqr_gp:iLQR_GP',
+        config_entry_point='safe_control_gym.controllers.lqr:ilqr_gp.yaml')

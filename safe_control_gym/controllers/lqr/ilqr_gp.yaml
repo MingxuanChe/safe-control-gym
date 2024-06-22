@@ -1,0 +1,28 @@
+# Cost parameters
+q_lqr: [1]
+r_lqr: [0.1]
+
+# Model arguments
+# Note: Higher simulation frequency is required if using controller designed
+#       based on the continuous-time model
+discrete_dynamics: False
+
+# GP training args
+train_iterations: 3
+optimization_itarations: bull
+learing_rate: null
+normalize_training_data: False
+gp_model_path: null
+
+# GP args
+prob: 0.955
+input_mask: null
+target_mask: null
+
+# Prior Model args
+prior_info: {}
+prior_param_coeff: 1.
+
+# Runner args
+deque_size: 10
+eval_batch_size: 10
