@@ -518,14 +518,14 @@ class Quadrotor(BaseAviary):
             prior_prop (dict): specify the prior inertial prop to use in the symbolic model.
         '''
         if self.QUAD_TYPE is QuadType.TWO_D_ATTITUDE:
-            if isinstance(prior_prop, list):
-                params_b_F = prior_prop[0].b_F
-                params_a_F = prior_prop[1].a_F
-                params_pitch_rate = prior_prop[2].pitch_rate
-            else:
-                params_pitch_rate =  prior_prop.get('pitch_rate', self.PITCH_RATE)
-                params_b_F = prior_prop.get('b_F', self.B_F)
-                params_a_F = prior_prop.get('a_F', self.A_F) 
+            # if isinstance(prior_prop, list):
+            #     params_b_F = prior_prop[0].b_F
+            #     params_a_F = prior_prop[1].a_F
+            #     params_pitch_rate = prior_prop[2].pitch_rate
+            # else:
+            params_pitch_rate =  prior_prop.get('pitch_rate', self.PITCH_RATE)
+            params_b_F = prior_prop.get('b_F', self.B_F)
+            params_a_F = prior_prop.get('a_F', self.A_F) 
             m = 0.027
             Iyy = 1.4e-5
         else:
@@ -1010,6 +1010,7 @@ class Quadrotor(BaseAviary):
                                                      Q=self.Q,
                                                      R=self.R)['l'])
             if self.TASK == Task.TRAJ_TRACKING:
+                # print('self.ctrl_step_counter: ', self.ctrl_step_counter)
                 return float(-1 * self.symbolic.loss(x=self.state,
                                                      Xr=self.X_GOAL[self.ctrl_step_counter + 1, :],  # +1 because state has already advanced but counter not incremented.
                                                      u=self.current_clipped_action,
