@@ -28,7 +28,8 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=True):
 
     SYS='quadrotor_2D'
     TASK='tracking'
-    ALGO='ilqr_c'
+    # ALGO='ilqr_c'
+    ALGO='ilqr'
     SYS_NAME='quadrotor'
 
     PRIOR = '100'

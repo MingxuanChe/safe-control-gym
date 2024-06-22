@@ -1,0 +1,61 @@
+algo: ilqr_gp
+algo_config:
+  # Cost parameters
+  q_lqr: [1, 0.1, 1, 0.1, 1.0]
+  r_lqr: [0.5, 0.5]
+  gp_model_path: null
+  gp_model_path: /home/mingxuan/Repositories/scg_mx/ilqr_contraction/ilqr_c/ilqr_gp/results
+  # Model arguments
+  # Note: Higher simulation frequency is required if using controller designed
+  #       based on the continuous-time model
+  discrete_dynamics: False
+  # discrete_dynamics: True
+  # CM_search: False
+  CM_search: True
+  # prior_param_coeff: 0.1
+  prior_param_coeff: 1
+  prior_info:
+      prior_prop:
+        # M: 0.027
+        # Iyy: 1.4e-05
+        # b_F: 18.112984649321753
+        # a_F: 3.7613154938448576
+      # pitch_rate: 100
+        b_F: 100
+        a_F: 100
+        # pitch_rate: 60.00143727772195
+        # pitch_rate: 0.05
+        pitch_rate: 1
+        # pitch_rate: 20
+  # num_epochs: 1
+  num_epochs: 2
+  num_samples: 100
+  # normalize_training_data: true
+  same_train_initial_state: True
+  same_test_initial_state: true
+  num_test_episodes_per_epoch: 1
+  num_train_episodes_per_epoch: 1
+  rand_data_selection: false
+  uniform_data_selection: True
+  terminate_train_on_done: True
+  terminate_test_on_done: False
+  input_mask: null
+  # target_mask: null
+  # input_mask: [4, 6]
+  # target_mask: [4]
+  learning_rate: 
+    - 0.01
+    - 0.01
+    - 0.01
+    - 0.01
+    - 0.01
+  optimization_iterations:
+    - 1000
+    - 1000
+    - 1000
+    - 1000
+    - 2000
+  # parallel: True
+  optimal_reference_path: /home/mingxuan/Repositories/scg_mx/ilqr_contraction/ilqr_c/temp-data/ilqr_data_quadrotor_traj_tracking.pkl
+  # optimal_reference_path: /home/mingxuan/Repositories/scg_mx/ilqr_contraction/ilqr_c/temp-data/ilqr_c_data_quadrotor_traj_tracking.pkl
+  # optimal_reference_path: null

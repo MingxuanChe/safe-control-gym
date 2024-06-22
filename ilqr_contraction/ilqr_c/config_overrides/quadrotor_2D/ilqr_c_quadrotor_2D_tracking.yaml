@@ -2,20 +2,18 @@ algo: ilqr_c
 algo_config:
   # Cost parameters
   q_lqr: [1, 0.1, 1, 0.1, 1.0]
-  r_lqr: [1, 1]
+  r_lqr: [0.5, 0.5]
 
   # Model arguments
   # Note: Higher simulation frequency is required if using controller designed
   #       based on the continuous-time model
   discrete_dynamics: False
-  CM_search: False #True
+  CM_search: False
   prior_info:
       prior_prop:
         b_F: 18.112984649321753
+      # - b_F: 3.7613154938448576
         a_F: 3.7613154938448576
       # - pitch_rate: 60.00143727772195
-        pitch_rate: 60
-      # - pitch_rate: 1.0
-      # - b_F: 20
-      # - a_F: 0.1
-      # - pitch_rate: 2.0
+        pitch_rate: 60.00143727772195
+

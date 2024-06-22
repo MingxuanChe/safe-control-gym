@@ -202,10 +202,10 @@ def train(config):
         plt.savefig(os.path.join(config.output_dir, 'trajectory_all.png'))
 
 
-    # if control_agent.gaussian_process is not None:
-    #     control_agent.line_search_for_CM()
-    # else:
-    #     control_agent.prior_ctrl.line_search_for_CM()
+    if control_agent.gaussian_process is not None:
+        control_agent.line_search_for_CM()
+    else:
+        control_agent.prior_ctrl.line_search_for_CM()
     control_agent.close()
 
     # save to pickle
