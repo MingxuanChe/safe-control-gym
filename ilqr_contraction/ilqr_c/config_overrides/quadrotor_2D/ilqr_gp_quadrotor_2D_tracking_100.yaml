@@ -20,16 +20,24 @@ algo_config:
         # Iyy: 1.4e-05
         # b_F: 18.112984649321753
         # a_F: 3.7613154938448576
-      # pitch_rate: 100
-        b_F: 100
-        a_F: 100
         # pitch_rate: 60.00143727772195
+        # prior 1
+        # b_F: 17.7354 
+        # a_F: 3.6912
+        # pitch_rate: 50.12
+        # # prior 2
+        b_F: 101.1090344904954729
+        a_F: 98.1483957486319962
+        pitch_rate: 1.012
+        # b_F: 18.112984649321753
+        # a_F: 3.7613154938448576
+        # pitch_rate: 0.5
         # pitch_rate: 0.05
-        pitch_rate: 1
         # pitch_rate: 20
   # num_epochs: 1
   num_epochs: 2
-  num_samples: 50
+  num_samples: 30
+  # test_data_ratio: 0.5
   # normalize_training_data: true
   same_train_initial_state: True
   same_test_initial_state: true
