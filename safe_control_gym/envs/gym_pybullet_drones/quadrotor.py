@@ -250,13 +250,13 @@ class Quadrotor(BaseAviary):
             self.MASS, self.J[1, 1] = inertial_prop
         # elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE and np.array(inertial_prop).shape == (3,):
         elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
-            if isinstance(inertial_prop, dict):
-                self.B_F = inertial_prop.b_F
-                self.A_F = inertial_prop.a_F
-                self.PITCH_RATE = inertial_prop.pitch_rate
-            elif isinstance(inertial_prop, list):
-                self.B_F, self.A_F, self.PITCH_RATE = \
-                inertial_prop[0].b_F, inertial_prop[1].a_F, inertial_prop[2].pitch_rate
+            # if isinstance(inertial_prop, dict):
+            self.B_F = inertial_prop.b_F
+            self.A_F = inertial_prop.a_F
+            self.PITCH_RATE = inertial_prop.pitch_rate
+            # elif isinstance(inertial_prop, list):
+            #     self.B_F, self.A_F, self.PITCH_RATE = \
+            #     inertial_prop[0].b_F, inertial_prop[1].a_F, inertial_prop[2].pitch_rate
             # self.MASS, self.J[1, 1] = inertial_prop
             # self.B_F = 18.112984649321753
             # self.A_F = 3.7613154938448576
@@ -457,6 +457,8 @@ class Quadrotor(BaseAviary):
         disturb_force = None
         passive_disturb = 'dynamics' in self.disturbances
         adv_disturb = self.adversary_disturbance == 'dynamics'
+        # print('passive_disturb:', passive_disturb)
+        # print('adv_disturb:', adv_disturb)
         if passive_disturb or adv_disturb:
             disturb_force = np.zeros(self.DISTURBANCE_MODES['dynamics']['dim'])
         if passive_disturb:
@@ -479,7 +481,7 @@ class Quadrotor(BaseAviary):
                 disturb_force = [float(disturb_force[0]), 0, float(disturb_force[1])]
             elif self.QUAD_TYPE == QuadType.THREE_D:
                 disturb_force = np.asarray(disturb_force).flatten()
-
+        # print('disturb_force:', disturb_force)
         # Advance the simulation.
         super()._advance_simulation(rpm, disturb_force)
         # Standard Gym return.
@@ -676,6 +678,9 @@ class Quadrotor(BaseAviary):
             'quad_Iyy': Iyy,
             'quad_Ixx': Ixx if 'Ixx' in locals() else None,
             'quad_Izz': Izz if 'Izz' in locals() else None,
+            'params_b_F': params_b_F if params_b_F in locals() else None,
+            'params_a_F': params_a_F if params_a_F in locals() else None,
+            'params_pitch_rate': params_pitch_rate if params_pitch_rate in locals() else None,
             # equilibrium point for linearization
             'X_EQ': X_EQ,
             'U_EQ': U_EQ,

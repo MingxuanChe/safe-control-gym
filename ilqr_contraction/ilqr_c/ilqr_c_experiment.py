@@ -16,7 +16,7 @@ from safe_control_gym.experiments.base_experiment import BaseExperiment
 from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 from safe_control_gym.utils.utils import set_device_from_config, set_dir_from_config, set_seed_from_config
-
+from safe_control_gym.controllers.mpc.gp_utils import covSEard, covSE
 
 def train(config):
     """Training for a given set of hyperparameters.
@@ -201,18 +201,69 @@ def train(config):
         # save the plot
         plt.savefig(os.path.join(config.output_dir, 'trajectory_all.png'))
 
-
-    if control_agent.gaussian_process is not None:
-        control_agent.line_search_for_CM()
-    else:
-        control_agent.prior_ctrl.line_search_for_CM()
+    # try:
+    #     if control_agent.gaussian_process is not None:
+    #         # compute the var one data bound
+    #         e_bar_0 = 180.253 # 
+    #         # e_bar_0 = 53.09
+    #         lengthscale, output_scale, noise, _ = control_agent.gaussian_process.get_hyperparameters(as_numpy=True)
+    #         num_gps = lengthscale.shape[0]
+    #         print(f'lengthscale: {lengthscale}')
+    #         var_one_bound = np.zeros(num_gps)
+    #         for i in range(num_gps):
+    #         #     var_one_bound[i] = covSEard(0, 0, lengthscale[i], output_scale[i]) \
+    #         #                         - covSEard(0, e_bar_0, lengthscale[i], output_scale[i])**2 / \
+    #         #                         (covSEard(0, 0, lengthscale[i], output_scale[i]) + noise[i])
+    #             var_one_bound[i] = covSE(0, 0, lengthscale[i], output_scale[i]) \
+    #                                 - covSE(0, e_bar_0, lengthscale[i], output_scale[i])**2 / \
+    #                                 (covSE(0, 0, lengthscale[i], output_scale[i]) + noise[i])
+    #         std_one_bound = np.sqrt(var_one_bound)
+    #         print(f'std_one_bound: {std_one_bound}')
+    #         s = 2
+    #         norm_std_one_bound = np.linalg.norm( s * std_one_bound)
+    #         print(f'norm_var_one_bound: {np.linalg.norm(var_one_bound)}')
+    #         # print(f'norm_std_one_bound: {norm_std_one_bound}')
+    #         print(f'Learning error bound is {norm_std_one_bound}')
+    #         control_agent.line_search_for_CM(d_bar= norm_std_one_bound)
+    #         pass
+    #     else:
+    #         # control_agent.prior_ctrl.line_search_for_CM()# d_bar=
+    #         # control_agent.prior_ctrl.line_search_for_CM(d_bar=130.05) # 1115.05
+    #         control_agent.prior_ctrl.line_search_for_CM(d_bar=21.02)
+    # except Exception as e:
+    #     print(f'Error: {e}')
+    #     print('CM search fails.')
+    # compute cost of the trajectory
+    cost = 0
+    Q = np.diag(control_agent.env.Q)
+    R = np.diag(control_agent.env.R)
+    print('len(results[action][0]', len(results['action'][0]))
+    for k in range(len(results['action'][0])):
+        cost += 0.5 * (results['obs'][0][k] - control_agent.env.X_GOAL[k, :])  @ np.diag(Q) @ (results['obs'][0][k] - control_agent.env.X_GOAL[k, :]) \
+                + 0.5 * (results['action'][0][k] - control_agent.model.U_EQ) @ np.diag(R) @ (results['action'][0][k] - control_agent.model.U_EQ)
+    cost += 0.5 * (results['obs'][0][-1] - control_agent.env.X_GOAL[k, :])  @ np.diag(Q) @ (results['obs'][0][-1] - control_agent.env.X_GOAL[k, :])
+    print(f'Cost of the trajectory: {cost}')
     control_agent.close()
-
     # save to pickle
     with open(os.path.join(config.output_dir, 'metrics.pkl'), 'wb') as f:
         import pickle
         pickle.dump(metrics, f)
-    
+    # test_object = 'good_prior.npy'
+    # test_object = 'good_learn.npy'
+    # test_object = 'bad_prior.npy'
+    # test_object = 'bad_learn.npy'
+    goal_object = 'goal.npy'
+    test_object =  'ppo.npy'
+    result_file_name = os.path.join(config.output_dir, test_object)
+    save_results = {'trajs_data': results, 'metrics': metrics}
+    np.save(result_file_name, save_results)
+
+    # save the goal
+    goal_file_name = os.path.join(config.output_dir, goal_object)
+    goal_results = {'x_goal': eval_env.X_GOAL, 'metrics': metrics}
+    np.save(goal_file_name, eval_env.X_GOAL)
+
+
     return eval_env.X_GOAL, results, metrics
 
 

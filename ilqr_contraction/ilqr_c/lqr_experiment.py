@@ -89,9 +89,19 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=True):
         else:
             trajs_data, _ = experiment.run_evaluation(training=True, n_steps=n_steps)
 
-        if gui:
-            post_analysis(trajs_data['obs'][0], trajs_data['action'][0], ctrl.env)
+        # if gui:
+        #     post_analysis(trajs_data['obs'][0], trajs_data['action'][0], ctrl.env)
 
+        # compute cost of the trajectory
+        cost = 0
+        Q = np.diag(ctrl.env.Q)
+        R = np.diag(ctrl.env.R)
+        print('len(results[action][0]', len(trajs_data['action'][0]))
+        for k in range(len(trajs_data['action'][0])):
+            cost += 0.5 * (trajs_data['obs'][0][k] - ctrl.env.X_GOAL[k, :])  @ np.diag(Q) @ (trajs_data['obs'][0][k] - ctrl.env.X_GOAL[k, :]) \
+                + 0.5 * (trajs_data['action'][0][k] - ctrl.model.U_EQ) @ np.diag(R) @ (trajs_data['action'][0][k] - ctrl.model.U_EQ) 
+        cost += 0.5 * (trajs_data['obs'][0][-1] - ctrl.env.X_GOAL[k, :])  @ np.diag(Q) @ (trajs_data['obs'][0][-1] - ctrl.env.X_GOAL[k, :])
+        print(f'Cost of the trajectory: {cost}')
         # Close environments
         static_env.close()
         static_train_env.close()

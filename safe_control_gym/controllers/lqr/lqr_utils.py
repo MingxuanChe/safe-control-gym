@@ -38,6 +38,40 @@ def compute_lqr_gain(model, x_0, u_0, Q, R, discrete_dynamics=True):
 
     return gain
 
+def compute_P(model, x_0, u_0, Q, R, discrete_dynamics=True):
+    '''Computes the LQR gain from the model, linearization points, and Q and R matrices.
+
+    Args:
+        model (SymbolicModel): The SymbolicModel of the system.
+        x_0 (ndarray): The linearization point of the state X.
+        u_0 (ndarray): The linearization point of the input U.
+        Q (ndarray): The state cost matrix Q.
+        R (ndarray): The input cost matrix R.
+        discrete_dynamics (bool): If to use discrete or continuous dynamics.
+
+    Returns:
+        gain (ndarray): The LQR gain for the system.
+    '''
+
+    # Linearization.
+    df = model.df_func(x_0, u_0)
+    A, B = df[0].toarray(), df[1].toarray()
+
+    # Compute controller gain.
+    if discrete_dynamics:
+        # x[k+1] = A x[k] + B u[k]
+        A, B = discretize_linear_system(A, B, model.dt)
+        P = scipy.linalg.solve_discrete_are(A, B, Q, R)
+        btp = np.dot(B.T, P)
+        gain = np.dot(np.linalg.inv(R + np.dot(btp, B)),
+                      np.dot(btp, A))
+    else:
+        # dx/dt = A x + B u
+        P = scipy.linalg.solve_continuous_are(A, B, Q, R)
+        gain = np.dot(np.linalg.inv(R), np.dot(B.T, P))
+
+    return P
+
 
 def discretize_linear_system(A, B, dt, exact=False):
     '''Discretization of a linear system

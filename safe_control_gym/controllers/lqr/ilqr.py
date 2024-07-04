@@ -298,7 +298,10 @@ class iLQR(BaseController):
             action = self.gains_fb_best[step].dot(obs) + self.input_ff_best[:, step]
         else:
             action, _, _ = self.calculate_lqr_action(obs, step)
-
+            
+        action_bound_high = [ 0.4767, 0.4]
+        action_bound_low = [ 0.079, -0.4]
+        action = np.clip(action, action_bound_low, action_bound_high)
         return action
 
     def calculate_lqr_action(self, obs, step):

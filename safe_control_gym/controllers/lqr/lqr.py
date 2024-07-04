@@ -2,6 +2,7 @@
 
 from safe_control_gym.controllers.base_controller import BaseController
 from safe_control_gym.controllers.lqr.lqr_utils import compute_lqr_gain, get_cost_weight_matrix
+from safe_control_gym.controllers.lqr.lqr_utils import compute_P
 from safe_control_gym.envs.benchmark_env import Task
 
 
@@ -38,6 +39,8 @@ class LQR(BaseController):
 
         self.gain = compute_lqr_gain(self.model, self.model.X_EQ, self.model.U_EQ,
                                      self.Q, self.R, self.discrete_dynamics)
+        self.P = compute_P(self.model, self.model.X_EQ, self.model.U_EQ,
+                            self.Q, self.R, self.discrete_dynamics)
 
     def reset(self):
         '''Prepares for evaluation.'''

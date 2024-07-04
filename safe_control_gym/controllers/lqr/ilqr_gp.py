@@ -162,8 +162,15 @@ class iLQR_GP(iLQR_C):
         M_prev = None
         chi_prev = None
         for i in range(Na):
-            result, M, chi, min_bound = self.compute_CM(alpha=alpha,
-                                            d_bar=d_bar)
+            try:
+                result, M, chi, min_bound = self.compute_CM(alpha=alpha,
+                                                d_bar=d_bar)
+            except:
+                print('Failed to compute CM with alpha:', alpha)
+                self.result = result_prev
+                self.M = M_prev
+                self.chi = chi_prev
+                break
             print("Optimal value: Jcv =","{:.2f}".format(result),
                   "( alpha =","{:.3f}".format(alpha),
                     ", min_bound =","{:.3f}".format(min_bound),
@@ -281,6 +288,7 @@ class iLQR_GP(iLQR_C):
         return action
     
     def select_action_with_gp(self, obs):
+        time_before = time.time()
         nx, nu = self.model.nx, self.model.nu
 
         # set reference for the control horizon
@@ -314,7 +322,8 @@ class iLQR_GP(iLQR_C):
                 # dmu should be of shape (input_length, 1)
                 A_gp[gp_idx, :] = dmu_gp.T[:, :nx][idx, :]
                 B_gp[gp_idx, :] = dmu_gp.T[:, nx:][idx, :]
-
+        # print('self.target_mask:', self.target_mask)
+        # print('self.gaussian_process.gp_list', self.gaussian_process.gp_list)
         # print('A_gp:', A_gp)
         # print('B_gp:', B_gp)
         assert A_gp.shape == (self.model.nx, self.model.nx)
@@ -341,6 +350,9 @@ class iLQR_GP(iLQR_C):
         # print('action:', action)
         # input('Press Enter to continue...')
         # pass
+        time_after = time.time()
+        # print('GP action selection time:', time_after - time_before)
+        # print('ctrl freq:', 1/(time_after - time_before))
         return action
  
     def reset(self):
@@ -513,23 +525,6 @@ class iLQR_GP(iLQR_C):
         targets = (x_dot_seq.T - (x_pred_seq)).transpose()  # (N, nx).
         # check whether target is close to zero
         # print('target:', targets)
-        delta_list = []
-        # check_target_data = True
-        check_target_data = False
-        if check_target_data:
-            model_func = self.prior_ctrl.model.fc_func
-            true_dynamics = self.env_func(gui=False).symbolic.fc_func
-            for i in range(x_seq.shape[0]):
-                delta = true_dynamics(x_seq[i, :], u_seq[i, :]).full().flatten() - \
-                                  - model_func(x_seq[i, :], u_seq[i, :]).full().flatten()
-                delta_list.append(delta[self.target_mask])
-            delta = np.array(delta_list)
-            import matplotlib.pyplot as plt
-            plt.plot(delta, label='delta', color='r', linestyle='--')
-            plt.plot(targets[:, self.target_mask], label='targets')
-            # print('targets.shape:', targets.shape)
-            plt.legend()
-            plt.show()
         # exit()
         inputs = np.hstack([x_seq, u_seq])  # (N, nx+nu).
         return inputs, targets
@@ -540,6 +535,7 @@ class iLQR_GP(iLQR_C):
                  gp_model=None,
                 #  load_hardware_data = False,
                  overwrite_saved_data: bool = None,
+                 train_hardware_data: bool = False,
                  ):
         '''Performs GP training.
 
@@ -551,7 +547,7 @@ class iLQR_GP(iLQR_C):
         Returns:
             training_results (dict): Dictionary of the training results.
         '''
-        if gp_model is None:
+        if gp_model is None and not train_hardware_data:
             gp_model = self.gp_model_path
         if overwrite_saved_data is None:
             overwrite_saved_data = self.overwrite_saved_data
@@ -650,7 +646,10 @@ class iLQR_GP(iLQR_C):
             train_idx = list(range(total_input_data))
             test_idx = list(range(total_input_data))
 
-        target_norm = np.linalg.norm(train_targets, axis=0)
+        print('train_targets', train_targets)
+        print('train_targets.shape:', train_targets.shape)
+        target_norm = np.linalg.norm(train_targets, axis=1)
+        print('Target norm.shape:', target_norm.shape)
         max_target_norm = np.max(target_norm)
         print('Max target norm:', max_target_norm)
 
@@ -697,8 +696,10 @@ class iLQR_GP(iLQR_C):
                                         learning_rate=self.learning_rate,
                                         gpu=self.use_gpu,
                                         output_dir=self.output_dir)
-        # self.gaussian_process.plot_trained_gp(train_inputs_tensor,
-        #                                         train_targets_tensor,)
+        
+        # self.gaussian_process.plot_trained_gp(test_inputs_tensor,
+        #                                         test_targets_tensor,
+        #                                         output_dir=self.output_dir)
                                                 
         self.reset()
         self.prior_ctrl.reset()

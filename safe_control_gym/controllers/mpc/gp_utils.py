@@ -16,6 +16,14 @@ from safe_control_gym.utils.utils import mkdirs
 torch.manual_seed(0)
 
 
+def covSE(x,
+            z,
+            ell,
+            sf2
+            ):
+    dist = ca.sum1((x - z) ** 2 / ell ** 2)
+    return sf2 * ca.exp(-.5 * dist)
+
 def covSEard(x,
              z,
              ell,
@@ -36,28 +44,6 @@ def covSEard(x,
     '''
     dist = ca.sum1((x - z)**2 / ell**2)
     return sf2 * ca.SX.exp(-.5 * dist)
-
-
-def covMatern52ard(x,
-                   z,
-                   ell,
-                   sf2
-                   ):
-    '''Matern kernel that takes nu equal to 5/2.
-
-    Args:
-        x (np.array or casadi.MX/SX): First vector.
-        z (np.array or casadi.MX/SX): Second vector.
-        ell (np.array or casadi.MX/SX): Length scales.
-        sf2 (float or casadi.MX/SX): output scale parameter.
-
-    Returns:
-        Matern52 kernel (casadi.MX/SX): Matern52 kernel.
-
-    '''
-    dist = ca.sum1((x - z)**2 / ell**2)
-    r_over_l = ca.sqrt(dist)
-    return sf2 * (1 + ca.sqrt(5) * r_over_l + 5 / 3 * r_over_l ** 2) * ca.exp(- ca.sqrt(5) * r_over_l)
 
 def covMatern52ard(x,
                    z,
@@ -94,8 +80,7 @@ class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
                  nx,
                  kernel='RBF'
                  ):
-        '''Initialize a multidimensional Gaussian Process model with zero mean function.
-
+        '''Initialize a multidimensional Gaussian Process model with zero mean function
         Args:
             train_x (torch.Tensor): input training data (input_dim X N samples).
             train_y (torch.Tensor): output training data (output dim x N samples).
@@ -122,6 +107,11 @@ class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
                     batch_shape=torch.Size([self.n]),
                     ard_num_dims=train_x.shape[1]
                 )
+        elif kernel == 'RBF_single':
+            self.covar_module = gpytorch.kernels.ScaleKernel(
+                gpytorch.kernels.RBFKernel(batch_shape=torch.Size([self.n])),
+                batch_shape=torch.Size([self.n])
+            )
         else:
             raise NotImplementedError
 
@@ -168,16 +158,11 @@ class ZeroMeanIndependentGPModel(gpytorch.models.ExactGP):
                 gpytorch.kernels.MaternKernel(ard_num_dims=train_x.shape[1]),
                 ard_num_dims=train_x.shape[1]
             )
-        if kernel == 'RBF':
+        elif kernel == 'RBF_single':
             self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.RBFKernel(ard_num_dims=train_x.shape[1]),
-                ard_num_dims=train_x.shape[1]
+                gpytorch.kernels.RBFKernel(),
             )
-        elif kernel == 'Matern':
-            self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.MaternKernel(ard_num_dims=train_x.shape[1]),
-                ard_num_dims=train_x.shape[1]
-            )
+
 
     def forward(self,
                 x
@@ -318,6 +303,7 @@ class GaussianProcessCollection:
         self.K_plus_noise = gp_K_plus_noise
         self.K_plus_noise_inv = gp_K_plus_noise_inv
         self.casadi_predict = self.make_casadi_predict_func()
+        self.casadi_linearized_predict = self.make_casadi_linearized_predict_func()
         print('================== GP models loaded. =================')
 
     def get_hyperparameters(self,
@@ -519,7 +505,8 @@ class GaussianProcessCollection:
     def plot_trained_gp(self,
                         inputs,
                         targets,
-                        fig_count=0
+                        fig_count=0,
+                        output_dir=None,
                         ):
         '''Plot the trained GP given the input and target data.'''
         assert self.parallel is False, ValueError('Parallel GP not supported yet.')
@@ -527,7 +514,10 @@ class GaussianProcessCollection:
             fig_count = gp.plot_trained_gp(inputs,
                                            targets[:, self.target_mask[gp_ind], None],
                                            self.target_mask[gp_ind],
-                                           fig_count=fig_count)
+                                           fig_count=fig_count,
+                                           output_dir=output_dir
+                                           )
+                                           
             fig_count += 1
 
     def _kernel_list(self,
@@ -865,6 +855,12 @@ class GaussianProcesses:
                                          [covMatern52ard(z, train_inputs.T, lengthscale.T, output_scale)],
                                          ['z'],
                                          ['K'])
+            elif self.kernel == 'RBF_single':
+                K_z_ztrain = ca.Function('k_z_ztrain',
+                                         [z],
+                                         [covSE(z, train_inputs.T, lengthscale, output_scale)],
+                                         ['z'],
+                                         ['K'])
             y += [ca.Function('pred',
                               [z],
                               [K_z_ztrain(z=z)['K'] @ self.gp_K_plus_noise_inv[i, :, :].detach().numpy() @ train_targets[:, i]],
@@ -1035,7 +1031,27 @@ class GaussianProcess:
             loss = -mll(output, train_y)
             loss.backward()
             if i % 100 == 0:
-                print('Iter %d/%d - MLL trian Loss: %.3f, Posterior Test Loss: %0.3f' % (i + 1, n_train, loss.item(), test_loss.item()))
+                # print('Iter %d/%d - MLL trian Loss: %.3f, Posterior Test Loss: %0.3f' % (i + 1, n_train, loss.item(), test_loss.item()))
+                # print('Iter %d/%d - MLL trian Loss: %.3f, Posterior Test Loss: %0.3f, \
+                #         output_scale: %0.3f, length_scale: %0.3f' \
+                #       % (i + 1, n_train, loss.item(), test_loss.item(), 
+                #          self.model.covar_module.outputscale.item(), 
+                #          self.model.covar_module.base_kernel.lengthscale.item()))
+                print(f'Iter {i + 1}/{n_train} - MLL trian Loss: {loss.item()}, Posterior Test Loss: {test_loss.item()},') 
+                print(f'output_scale: {self.model.covar_module.outputscale.item()},')
+                print(f'length_scale: ')
+                # torch_length_scale = torch.stack(self.model.covar_module.base_kernel.lengthscale)
+                # print(torch_length_scale)
+                # length_scale_list = 
+                # print(length_scale_list)
+                # N_length = self.model.covar_module.base_kernel.lengthscale.shape[0]
+                # length_scales = []
+                # for i in range(N_length):
+                #     length_scales.append(self.model.covar_module.base_kernel.lengthscale[i].item())
+                print(self.model.covar_module.base_kernel.lengthscale)
+
+
+                                                
 
             self.optimizer.step()
             # if test_loss < best_loss:
@@ -1129,6 +1145,12 @@ class GaussianProcess:
                                      [covMatern52ard(z, train_inputs.T, lengthscale.T, output_scale)],
                                      ['z'],
                                      ['K'])
+        elif self.kernel == 'RBF_single':
+            K_z_ztrain = ca.Function('k_z_ztrain',
+                                     [z],
+                                     [covSE(z, train_inputs.T, lengthscale, output_scale)],
+                                     ['z'],
+                                     ['K'])
         predict = ca.Function('pred',
                               [z],
                               [K_z_ztrain(z=z)['K'] @ self.model.K_plus_noise_inv.detach().numpy() @ train_targets],
@@ -1195,10 +1217,15 @@ class GaussianProcess:
         train_targets = train_targets.numpy()
         lengthscale = self.model.covar_module.base_kernel.lengthscale.detach().numpy()
         output_scale = self.model.covar_module.outputscale.detach().numpy()
-        M = np.diag(lengthscale.reshape(-1))
-        M_inv = np.linalg.inv(M)
-        M_inv = ca.DM(M_inv)
-        assert M.shape[0] == train_inputs.shape[1], ValueError('Mismatch in input dimensions')
+        if len(lengthscale) == 1:
+            # make sure lengthscale is 2D diagonal matrix with the same dimension as the input
+            M =  lengthscale
+            M_inv = 1 / M
+        else:
+            M = np.diag(lengthscale.reshape(-1))
+            M_inv = np.linalg.inv(M)
+            M_inv = ca.DM(M_inv)
+            assert M.shape[0] == train_inputs.shape[1], ValueError('Mismatch in input dimensions')
         num_data = train_inputs.shape[0]
         z = ca.SX.sym('z', len(self.input_mask)) # query point
         # compute 1st derivative of the kernel (8)
@@ -1282,30 +1309,50 @@ class GaussianProcess:
                         inputs,
                         targets,
                         output_label,
-                        fig_count=0
+                        fig_count=0,
+                        output_dir=None,
                         ):
-        if self.target_mask is not None:
-            targets = targets[:, self.target_mask]
-        means, _, preds = self.predict(inputs)
-        t = np.arange(inputs.shape[0])
-        lower, upper = preds.confidence_region()
-        for i in range(self.output_dimension):
-            fig_count += 1
-            plt.figure(fig_count)
-            if lower.ndim > 1:
-                plt.fill_between(t, lower[:, i].detach().numpy(), upper[:, i].detach().numpy(), alpha=0.5, label='95%')
-                plt.plot(t, means[:, i], 'r', label='GP Mean')
-                plt.plot(t, targets[:, i], '*k', label='Data')
-            else:
-                plt.fill_between(t, lower.detach().numpy(), upper.detach().numpy(), alpha=0.5, label='95%')
-                plt.plot(t, means, 'r', label='GP Mean')
-                plt.plot(t, targets, '*k', label='Data')
-            plt.legend()
-            plt.title(f'Fitted GP x{output_label}')
-            plt.xlabel('Time (s)')
-            plt.ylabel('v')
-            plt.show()
-        return fig_count
+        # setup gpytorch eval mode
+        self.model.eval()
+        self.likelihood.eval()
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            if self.target_mask is not None:
+                targets = targets[:, self.target_mask]
+            means, _, preds = self.predict(inputs)
+            t = np.arange(inputs.shape[0])
+            lower, upper = preds.confidence_region()
+            for i in range(self.output_dimension):
+                fig_count += 1
+                plt.figure(fig_count, figsize=(5, 2))
+                plt.tight_layout()
+                if lower.ndim > 1:
+                    plt.fill_between(t, lower[:, i].detach().numpy(), upper[:, i].detach().numpy(), alpha=0.5, label='95%')
+                    plt.plot(t, means[:, i], 'r', label='GP Mean')
+                    plt.plot(t, targets[:, i], '*k', label='Data')
+                else:
+                    plt.fill_between(t, lower.detach().numpy(), upper.detach().numpy(), alpha=0.5, label='95%')
+                    plt.plot(t, means, 'r', label='GP Mean')
+                    plt.plot(t, targets, '*k', label='Data')
+                # extract one-time sigma
+                # pred_std = torch.sqrt(torch.diag(preds.covariance_matrix))
+                plt.legend()
+                plt.title(f'Fitted GP x{output_label}')
+                # plt.xlabel('Time (s)')
+                # plt.ylabel('v')
+                # plt.show()
+                fig_file_name = f'gp_{output_label}.png'
+                saved_data = {'t': t, 
+                              'means': means, 
+                              'lower': lower, 
+                              'upper': upper, 
+                              'targets': targets}
+                data_file_name = f'gp_{output_label}.npz'
+                if output_dir is not None:
+                    plt.savefig(os.path.join(output_dir, fig_file_name))
+                    np.savez(os.path.join(output_dir, data_file_name), **saved_data)
+
+                
+            return fig_count
 
 
 def kmeans_centriods(n_cent, data, rand_state=0):
