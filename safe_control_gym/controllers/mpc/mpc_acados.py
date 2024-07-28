@@ -236,8 +236,6 @@ class MPC_ACADOS(BaseController):
         # Assign reference trajectory within horizon.
         goal_states = self.get_references()
         opti.set_value(x_ref, goal_states)
-        # if self.mode == 'tracking':
-        #     self.traj_step += 1
          # Solve the optimization problem.
         try:
             sol = opti.solve()
@@ -249,7 +247,7 @@ class MPC_ACADOS(BaseController):
         self.x_guess = x_val
         self.u_guess = u_val
         time_after = time.time()
-        print('MPC _compute_initial_guess time: ', time_after - time_before)
+        print(f'MPC _compute_initial_guess time:{time_after-time_before:.3f}')
 
     def setup_acados_optimizer(self):
         '''Sets up nonlinear optimization problem.'''
@@ -340,7 +338,9 @@ class MPC_ACADOS(BaseController):
         ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
         ocp.solver_options.integrator_type = 'DISCRETE'
         ocp.solver_options.nlp_solver_type = 'SQP' if not self.use_RTI else 'SQP_RTI'
-        ocp.solver_options.nlp_solver_max_iter = 5000 if not self.use_RTI else 1000
+        ocp.solver_options.nlp_solver_max_iter = 25 if not self.use_RTI else 5
+        # ocp.solver_options.globalization = 'FUNNEL_L1PEN_LINESEARCH' if not self.use_RTI else 'MERIT_BACKTRACKING'
+        # ocp.solver_options.globalization = 'MERIT_BACKTRACKING'
         # prediction horizon
         ocp.solver_options.tf = self.T * self.dt
 
@@ -520,16 +520,19 @@ class MPC_ACADOS(BaseController):
 
 
         time_after = time.time()
-        print('Initialization time: ', time_after_init - time_before_init)
-        print('Warm-starting time: ', time_after_warmstart - time_before_warmstart)
-        print('Getting reference time: ', time_after_get_ref - time_before_get_ref)
-        print('setting for loop time: ', time_after_for_loop - time_before_for_loop)
-        print('Setting final reference time: ', time_after_set_final_ref - time_before_set_final_ref)
-        if self.use_RTI:
-            print('Preparation phase time: ', time_after_prep - time_before_prep)
-            print('Feedback phase time: ', time_after_feedback - time_before_feedback)
-        print('Saving time: ', time_after_saving - time_before_saving)
-        print('Acados MPC _select_action time: ', time_after - time_before)
+        # print('Initialization time: ', time_after_init - time_before_init)
+        # print('Warm-starting time: ', time_after_warmstart - time_before_warmstart)
+        # print('Getting reference time: ', time_after_get_ref - time_before_get_ref)
+        # print('setting for loop time: ', time_after_for_loop - time_before_for_loop)
+        # print('Setting final reference time: ', time_after_set_final_ref - time_before_set_final_ref)
+        # if self.use_RTI:
+        #     print('Preparation phase time: ', time_after_prep - time_before_prep)
+        #     print('Feedback phase time: ', time_after_feedback - time_before_feedback)
+        # print('Saving time: ', time_after_saving - time_before_saving)
+        # print('Acados MPC _select_action time: ', time_after - time_before)
+        print(f'mpc acados sol time: {time_after - time_before:.3f}; sol status {status}; qp iter {self.acados_ocp_solver.get_stats("sqp_iter")}')
+        if time_after - time_before > 0.02:
+            print(f'========= Warning: MPC ACADOS took {time_after - time_before:.3f} seconds =========')
         return action
 
     def get_references(self):

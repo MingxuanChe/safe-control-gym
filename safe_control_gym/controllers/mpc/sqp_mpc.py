@@ -247,10 +247,20 @@ class SQPMPC(MPC):
                           Ur=np.zeros((nu, 1)),
                           Q=self.Q,
                           R=self.R)['l']
+        
+        # roll out the dynamics with x_guess and u_guesss and calculate the residuals
+        dynamics_residuals = []
+        # for i in range(self.T):
+            # if u_guess > 1:
+                # dynamics_residuals[:, i] = self.dynamics_func(x0=x_guess[:, i], p=u_guess[:, i])['xf'] - x_guess[:, i + 1]
+            # else:
+                # print('u_guess', u_guess)
+
         for i in range(self.T):
             # Dynamics constraints.
+            dynamics_residuals.append(self.dynamics_func(x0=x_guess[:, i], p=u_guess[:, i])['xf'] - x_guess[:, i + 1])
             next_state = self.linear_dynamics_func(x0=x_var[:, i], p=u_var[:, i], 
-                                                   x_guess=x_guess[:,i], u_guess=u_guess[:,i])['xf']
+                                                   x_guess=x_guess[:,i], u_guess=u_guess[:,i])['xf'] + dynamics_residuals[i]
             opti.subject_to(x_var[:, i + 1] == next_state)
             # State and input constraints
             soft_con_coeff = 10
@@ -333,8 +343,8 @@ class SQPMPC(MPC):
         else:
             action = np.array([u_val[0]])
         # action += self.u_guess[0]
-        print('self.u_guess', self.u_guess.T)
-        print('self.x_guess', self.x_guess.T)
+        # print('self.u_guess', self.u_guess.T)
+        # print('self.x_guess', self.x_guess.T)
         action = self.u_guess[0]
         self.prev_action = action
 
