@@ -60,7 +60,6 @@ class GPMPC(MPC):
             use_gpu: bool = False,
             gp_model_path: str = None,
             kernel: str = 'Matern',
-            parallel: bool = False,
             prob: float = 0.955,
             initial_rollout_std: float = 0.005,
             input_mask: list = None,
@@ -86,7 +85,6 @@ class GPMPC(MPC):
             horizon (int): MPC planning horizon.
             Q, R (np.array): cost weight matrix.
             constraint_tol (float): Tolerance to add the the constraint as sometimes solvers are not exact.
-            use_prev_start (bool): Warmstart mpc with the previous solution.
             train_iterations (int): the number of training examples to use for each dimension of the GP.
             overwrite_saved_data (bool): Overwrite the input and target data to the already saved data if it exists.
             optimization_iterations (list): the number of optimization iterations for each dimension of the GP.
@@ -123,6 +121,8 @@ class GPMPC(MPC):
         else:
             self.soft_constraints_params = soft_constraints
 
+        print('prior_info[prior_prop]', prior_info['prior_prop'])
+        # exit()
         # Initialize the method using linear MPC.
         self.prior_ctrl = LinearMPC(
             self.prior_env_func,
@@ -177,7 +177,6 @@ class GPMPC(MPC):
         self.learning_rate = learning_rate
         self.gp_model_path = gp_model_path
         self.kernel = kernel
-        self.parallel = parallel
         self.normalize_training_data = normalize_training_data
         self.prob = prob
         if input_mask is None:
@@ -204,8 +203,8 @@ class GPMPC(MPC):
         self.gp_soft_constraints_coeff = self.soft_constraints_params['gp_soft_constraints_coeff']
 
         self.init_solver = 'ipopt'
-        self.sqp_solver = 'qrsqp'
-        # self.sqp_solver = 'ipopt'
+        # self.sqp_solver = 'qrsqp'
+        self.sqp_solver = 'ipopt'
 
     def setup_prior_dynamics(self):
         '''Computes the LQR gain used for propograting GP uncertainty from the prior model dynamics.'''
@@ -214,7 +213,6 @@ class GPMPC(MPC):
         Q_lqr = self.Q
         R_lqr = self.R
         P = scipy.linalg.solve_discrete_are(A, B, Q_lqr, R_lqr)
-        self.P = P
         btp = np.dot(B.T, P)
         self.lqr_gain = -np.dot(np.linalg.inv(self.R + np.dot(btp, B)), np.dot(btp, A))
         self.discrete_dfdx = A
@@ -314,12 +312,9 @@ class GPMPC(MPC):
             cov_x = np.diag([self.initial_rollout_std**2] * nx)
             z_batch = np.hstack((self.x_prev[:, :-1].T, self.u_prev.T)) # (T, input_dim)
             # Compute the covariance of the dynamics at each time step.
-            time_before = time.time()
             _, cov_d_tensor_batch = self.gaussian_process.predict(z_batch, return_pred=False)
             cov_d_batch = cov_d_tensor_batch.detach().numpy()
-            time_after = time.time()
-            print('Batch Time to compute cov_d:', time_after - time_before)
-            time_before = time.time()
+
             for i in range(T):
                 state_covariances[i] = cov_x
                 cov_u = self.lqr_gain @ cov_x @ self.lqr_gain.T
@@ -366,8 +361,6 @@ class GPMPC(MPC):
                         self.Bd @ cov_d @ self.Bd.T
                 else:
                     raise NotImplementedError('gp_approx method is incorrect or not implemented')
-            time_after = time.time()
-            # print('Time to compute cov_d:', time_after - time_before)
             # Udate Final covariance.
             for si, state_constraint in enumerate(self.constraints.state_constraints):
                 state_constraint_set[si][:, -1] = -1 * self.inverse_cdf * \
@@ -675,27 +668,26 @@ class GPMPC(MPC):
             self.u_prev = u_val
             self.x_prev = x_val
         except RuntimeError:
-            if self.sqp_solver == 'ipopt':
-                x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
-            else :
-                return_status = opti.return_status()
-                print(f'Optimization failed with status: {return_status}')
-                if return_status == 'unknown':
-                    # self.terminate_loop = True
-                    u_val = self.u_prev
-                    x_val = self.x_prev
-                    if u_val is None:
-                        print('[WARN]: MPC Infeasible first step.')
-                        u_val = u_guess
-                        x_val = x_guess
-                elif return_status == 'Maximum_Iterations_Exceeded':
-                    self.terminate_loop = True
-                    u_val = opti.debug.value(u_var)
-                    x_val = opti.debug.value(x_var)
-                elif return_status == 'Search_Direction_Becomes_Too_Small':
-                    self.terminate_loop = True
-                    u_val = opti.debug.value(u_var)
-                    x_val = opti.debug.value(x_var)
+            # sol = opti.solve()
+            # x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+            return_status = opti.return_status()
+            print(f'Optimization failed with status: {return_status}')
+            if return_status == 'unknown':
+                # self.terminate_loop = True
+                u_val = self.u_prev
+                x_val = self.x_prev
+                if u_val is None:
+                    print('[WARN]: MPC Infeasible first step.')
+                    u_val = u_guess
+                    x_val = x_guess
+            elif return_status == 'Maximum_Iterations_Exceeded':
+                self.terminate_loop = True
+                u_val = opti.debug.value(u_var)
+                x_val = opti.debug.value(x_var)
+            elif return_status == 'Search_Direction_Becomes_Too_Small':
+                self.terminate_loop = True
+                u_val = opti.debug.value(u_var)
+                x_val = opti.debug.value(x_var)
 
         u_val = np.atleast_2d(u_val)
         self.x_prev = x_val
@@ -845,18 +837,6 @@ class GPMPC(MPC):
         test_targets_tensor = torch.Tensor(test_targets).double()
 
         # Define likelihood.
-        # likelihood = gpytorch.likelihoods.GaussianLikelihood(
-        #     noise_constraint=gpytorch.constraints.GreaterThan(1e-6),
-        # ).double()
-        # self.gaussian_process = GaussianProcessCollection(ZeroMeanIndependentGPModel,
-        #                                                   likelihood,
-        #                                                   len(self.target_mask),
-        #                                                   input_mask=self.input_mask,
-        #                                                   target_mask=self.target_mask,
-        #                                                   normalize=self.normalize_training_data,
-        #                                                   kernel=self.kernel,
-        #                                                   parallel=self.parallel
-        #                                                   )
         if self.parallel:
             likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_shape=torch.Size([len(self.target_mask)]),
                                                                  noise_constraint=gpytorch.constraints.GreaterThan(1e-6)).double()
@@ -906,19 +886,17 @@ class GPMPC(MPC):
         except UnboundLocalError:
             training_results['info'] = None
         return training_results
-
+    
     def load(self, model_path):
-        '''Loads a pretrained batch GP model.        Args:
+        '''Loads a pretrained batch GP model.
+
+        Args:
             model_path (str): Path to the pretrained model.
         '''
         data = np.load(f'{model_path}/data.npz')
-        if self.parallel:
-            gp_model_path = f'{model_path}/best_model.pth'
-            self.train_gp(input_data=data['data_inputs'], target_data=data['data_targets'], gp_model=gp_model_path)
-        else:
-            self.train_gp(input_data=data['data_inputs'], target_data=data['data_targets'], gp_model=model_path)
-        print('================== GP models loaded. =================')
-        
+        gp_model_path = f'{model_path}/best_model.pth'
+        self.train_gp(input_data=data['data_inputs'], target_data=data['data_targets'], gp_model=gp_model_path)
+
     def learn(self, env=None):
         '''Performs multiple epochs learning.
         '''
@@ -939,11 +917,11 @@ class GPMPC(MPC):
         test_envs = []
         if self.same_test_initial_state:
             for epoch in range(self.num_epochs):
-                test_envs.append(self.env_func(randomized_init=True, seed=self.seed * 111))
-                test_envs[epoch].action_space.seed(self.seed * 111)
+                test_envs.append(self.env_func(randomized_init=True, seed=self.seed))
+                test_envs[epoch].action_space.seed(self.seed)
         else:
-            test_env = self.env_func(randomized_init=True, seed=self.seed * 111)
-            test_env.action_space.seed(self.seed * 111)
+            test_env = self.env_func(randomized_init=True, seed=self.seed)
+            test_env.action_space.seed(self.seed)
             test_envs = [test_env] * self.num_epochs
 
         for episode in range(self.num_train_episodes_per_epoch):
@@ -957,6 +935,7 @@ class GPMPC(MPC):
             test_runs[0].update({test_ep: munch.munchify(run_results)})
         self.reset()
 
+        training_results = None
         for epoch in range(1, self.num_epochs):
             # only take data from the last episode from the last epoch
             if self.rand_data_selection:
@@ -986,12 +965,12 @@ class GPMPC(MPC):
                 train_runs[epoch].update({episode: munch.munchify(run_results)})
 
             lengthscale, outputscale, noise, kern = self.gaussian_process.get_hyperparameters(as_numpy=True)
-        
-        # save training data 
-        np.savez(os.path.join(self.output_dir, 'data'),
-                data_inputs=training_results['train_inputs'],
-                data_targets=training_results['train_targets'])
-        
+
+        if training_results:
+            np.savez(os.path.join(self.output_dir, 'data'),
+                    data_inputs=training_results['train_inputs'],
+                    data_targets=training_results['train_targets'])
+
         # close environments
         for env in train_envs:
             env.close()

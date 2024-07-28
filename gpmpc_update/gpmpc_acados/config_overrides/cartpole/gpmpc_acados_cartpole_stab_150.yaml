@@ -4,12 +4,12 @@ algo_config:
   deque_size: 10
   eval_batch_size: 10
   gp_approx: mean_eq
+  # gp_model_path: null
   # gp_model_path: ./gp_mpc/results/ 
-  gp_model_path: null
   horizon: 20
   prior_info:
     prior_prop:
-      cart_mass: 0.5
+      cart_mass: 1.0
       pole_length: 0.5
       pole_mass: 0.1
   initial_rollout_std: 0.0
@@ -28,8 +28,7 @@ algo_config:
   - 3000
   - 3000
   overwrite_saved_data: false
-  # prior_param_coeff: 1.5
-  prior_param_coeff: 1.0
+  prior_param_coeff: 1.5
   prob: 0.95
   q_mpc:
   - 1
@@ -65,7 +64,7 @@ algo_config:
   # parallel: False 
   parallel: True
   use_RTI: False
-  # use_RTI: True
+  output_dir: gpmpc_acados/results/
 
 device: cpu
 restore: null

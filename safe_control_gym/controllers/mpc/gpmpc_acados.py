@@ -20,7 +20,6 @@ from safe_control_gym.controllers.mpc.gp_utils import (GaussianProcessCollection
 from safe_control_gym.controllers.mpc.linear_mpc import MPC, LinearMPC
 from safe_control_gym.controllers.mpc.mpc import MPC
 from safe_control_gym.controllers.mpc.gp_mpc import GPMPC
-# from safe_control_gym.controllers.mpc.sqp_mpc import SQPMPC
 from safe_control_gym.envs.benchmark_env import Task
 from acados_template import AcadosOcp, AcadosOcpSolver, AcadosSimSolver, AcadosModel
 
@@ -64,7 +63,6 @@ class GPMPC_ACADOS(GPMPC):
             output_dir: str = 'results/temp',
             compute_ipopt_initial_guess: bool = True,
             use_RTI: bool = False,
-            use_ancillary_gain: bool = False,
             **kwargs
     ):
         super().__init__(
@@ -103,9 +101,6 @@ class GPMPC_ACADOS(GPMPC):
         # GP params
         self.num_dyn_params = None
         # MPC params
-        self.gp_soft_constraints = self.soft_constraints_params['gp_soft_constraints']
-        self.gp_soft_constraints_coeff = self.soft_constraints_params['gp_soft_constraints_coeff']
-
         self.init_solver = 'ipopt'
         self.compute_ipopt_initial_guess = compute_ipopt_initial_guess
         self.use_RTI = use_RTI
@@ -216,12 +211,11 @@ class GPMPC_ACADOS(GPMPC):
         ocp.cost.cost_type = 'LINEAR_LS'
         ocp.cost.cost_type_e = 'LINEAR_LS'
         ocp.cost.W = scipy.linalg.block_diag(self.Q, self.R)
-        # ocp.cost.W_e = self.Q
-        ocp.cost.W_e = self.P
+        ocp.cost.W_e = self.Q
         ocp.cost.Vx = np.zeros((ny, nx))
         ocp.cost.Vx[:nx, :nx] = np.eye(nx)
         ocp.cost.Vu = np.zeros((ny, nu))
-        ocp.cost.Vu[nx:(nx+nu), :] = np.eye(nu)
+        ocp.cost.Vu[nx:(nx+nu), :nu] = np.eye(nu)
         ocp.cost.Vx_e = np.eye(nx)
         # placeholder y_ref and y_ref_e (will be set in select_action)
         ocp.cost.yref = np.zeros((ny, ))
@@ -283,12 +277,12 @@ class GPMPC_ACADOS(GPMPC):
         ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
         ocp.solver_options.integrator_type = 'DISCRETE'
         ocp.solver_options.nlp_solver_type = 'SQP' if not self.use_RTI else 'SQP_RTI'
-        ocp.solver_options.nlp_solver_max_iter = 1 if not self.use_RTI else 5
-        ocp.solver_options.as_rti_level = 1 if self.use_RTI else 0
-        ocp.solver_options.as_rti_iter = 1 if self.use_RTI else 0
+        ocp.solver_options.nlp_solver_max_iter = 5 if not self.use_RTI else 1
+        # ocp.solver_options.as_rti_level = 0 if not self.use_RTI else 1
+        # ocp.solver_options.as_rti_iter = 0 if not self.use_RTI else 1
 
         # ocp.solver_options.globalization = 'FUNNEL_L1PEN_LINESEARCH' if not self.use_RTI else 'MERIT_BACKTRACKING'
-        # ocp.solver_options.globalization = 'MERIT_BACKTRACKING'
+        ocp.solver_options.globalization = 'MERIT_BACKTRACKING'
         # prediction horizon
         ocp.solver_options.tf = self.T * self.dt
 
@@ -376,16 +370,14 @@ class GPMPC_ACADOS(GPMPC):
 
     def select_action(self, obs, info=None):
         print('current obs:', obs)
-        time_before = time.time()
         if self.gaussian_process is None:
             action = self.prior_ctrl.select_action(obs)
         else:
             action = self.select_action_with_gp(obs)
         
-        time_after = time.time()
         self.last_obs = obs
         self.last_action = action
-        print('gpmpc acados action selection time:', time_after - time_before)
+        
         return action
     
     def select_action_with_gp(self, obs):
@@ -490,19 +482,9 @@ class GPMPC_ACADOS(GPMPC):
             self.traj_step += 1
         for idx in range(self.T):
             y_ref = np.concatenate((goal_states[:, idx], np.zeros((nu,))))
-            # print('y_ref:', y_ref)
             self.acados_ocp_solver.set(idx, "yref", y_ref)
-        # print('self.acados_ocp_solver.y_ref:', self.acados_ocp_solver.y_ref)
         y_ref_e = goal_states[:, -1] 
         self.acados_ocp_solver.set(self.T, "yref", y_ref_e)
-
-        # use acados inbuild function to warm start
-        warm_starting_iter = 5
-        time_before_acados_warmstarting = time.time()
-        for _ in range(warm_starting_iter):
-            self.acados_ocp_solver.solve_for_x0(obs)
-        time_after_acados_warmstarting = time.time()
-        print('acados warmstarting time:', time_after_acados_warmstarting - time_before_acados_warmstarting)
 
         # solve the optimization problem
         # try:
@@ -514,7 +496,7 @@ class GPMPC_ACADOS(GPMPC):
             # feedback phase
             self.acados_ocp_solver.options_set('rti_phase', 2) 
             status = self.acados_ocp_solver.solve()
-
+            
             if status not in [0, 2]:
                 raise Exception(f'acados returned status {status}. Exiting.')
                 # print(f"acados returned status {status}. ")
@@ -535,7 +517,9 @@ class GPMPC_ACADOS(GPMPC):
 
         # self.acados_ocp_solver.print_statistics()
         time_after = time.time()
-        print(f'gpmpc acados action selection time {time_after - time_before} with status {status}')
+        print(f'gpmpc acados sol time: {time_after - time_before:.3f}; sol status {status}; qp iter {self.acados_ocp_solver.get_stats("sqp_iter")}')
+        if time_after - time_before > 0.02:
+            print(f'========= Warning: MPC ACADOS took {time_after - time_before:.3f} seconds =========')
         self.runtime_list.append(time_after - time_before)
 
         return action
@@ -562,7 +546,10 @@ class GPMPC_ACADOS(GPMPC):
             self.setup_prior_dynamics()
             self.setup_acados_model(n_ind_points)
             self.setup_acados_optimizer(n_ind_points)
+            time_before = time.time()
             self.acados_ocp_solver = AcadosOcpSolver(self.ocp, 'gpmpc_acados_ocp_solver.json')
+            time_after = time.time()
+            print('acados setup time:', time_after - time_before)
         # self.setup_acados_optimizer()
             # n_ind_points = self.train_data['train_targets'].shape[0]
         print('=========== Resetting prior controller ===========')
@@ -581,5 +568,5 @@ class GPMPC_ACADOS(GPMPC):
         #         for item in self.runtime_list:
         #             f.write("%s\n" % item)
 
-        # self.runtime_list = []
+        self.runtime_list = []
 

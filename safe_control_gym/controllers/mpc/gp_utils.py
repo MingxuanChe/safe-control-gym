@@ -59,27 +59,6 @@ def covMatern52ard(x,
     r_over_l = ca.sqrt(dist)
     return sf2 * (1 + ca.sqrt(5) * r_over_l + 5 / 3 * r_over_l ** 2) * ca.exp(- ca.sqrt(5) * r_over_l)
 
-def covMatern52ard(x,
-                   z,
-                   ell,
-                   sf2
-                   ):
-    '''Matern kernel that takes nu equal to 5/2.
-
-    Args:
-        x (np.array or casadi.MX/SX): First vector.
-        z (np.array or casadi.MX/SX): Second vector.
-        ell (np.array or casadi.MX/SX): Length scales.
-        sf2 (float or casadi.MX/SX): output scale parameter.
-
-    Returns:
-        Matern52 kernel (casadi.MX/SX): Matern52 kernel.
-
-    '''
-    dist = ca.sum1((x - z)**2 / ell**2)
-    r_over_l = ca.sqrt(dist)
-    return sf2 * (1 + ca.sqrt(5) * r_over_l + 5 / 3 * r_over_l ** 2) * ca.exp(- ca.sqrt(5) * r_over_l)
-
 class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
     '''Multidimensional Gaussian Process model with zero mean function.
 
@@ -110,8 +89,8 @@ class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
         # For constant mean function.
         if kernel == 'RBF':
             self.covar_module = gpytorch.kernels.ScaleKernel(
-                    gpytorch.kernels.RBFKernel(batch_shape=torch.Size([self.n]),
-                                               ard_num_dims=train_x.shape[1]),
+                gpytorch.kernels.RBFKernel(batch_shape=torch.Size([self.n]),
+                                           ard_num_dims=train_x.shape[1]),
                 batch_shape=torch.Size([self.n]),
                 ard_num_dims=train_x.shape[1]
             )
@@ -119,9 +98,9 @@ class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
             self.covar_module = gpytorch.kernels.ScaleKernel(
                 gpytorch.kernels.MaternKernel(batch_shape=torch.Size([self.n]),
                                               ard_num_dims=train_x.shape[1]),
-                    batch_shape=torch.Size([self.n]),
-                    ard_num_dims=train_x.shape[1]
-                )
+                batch_shape=torch.Size([self.n]),
+                ard_num_dims=train_x.shape[1]
+            )
         else:
             raise NotImplementedError
 
@@ -158,16 +137,6 @@ class ZeroMeanIndependentGPModel(gpytorch.models.ExactGP):
         # For Zero mean function.
         self.mean_module = gpytorch.means.ZeroMean()
         # For constant mean function.
-        if kernel == 'RBF':
-            self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.RBFKernel(ard_num_dims=train_x.shape[1]),
-                ard_num_dims=train_x.shape[1]
-            )
-        elif kernel == 'Matern':
-            self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.MaternKernel(ard_num_dims=train_x.shape[1]),
-                ard_num_dims=train_x.shape[1]
-            )
         if kernel == 'RBF':
             self.covar_module = gpytorch.kernels.ScaleKernel(
                 gpytorch.kernels.RBFKernel(ard_num_dims=train_x.shape[1]),
@@ -227,7 +196,7 @@ class GaussianProcessCollection:
                  input_mask=None,
                  target_mask=None,
                  normalize=False,
-                 kernel='RBF',
+                 kernel='Matern',
                  parallel=False
                  ):
         '''Creates a single GaussianProcess for each output dimension.
@@ -289,9 +258,9 @@ class GaussianProcessCollection:
             train_inputs, train_targets (torch.tensors): Input and target training data.
             path_to_statedicts (str): Path to where the state dicts are saved.
         '''
+        
         self._init_properties(train_inputs, train_targets)
         if self.parallel:
-            print(f'Loading GP models.')
             self.gps.init_with_hyperparam(train_inputs,
                                           train_targets,
                                           path_to_statedicts)
@@ -313,12 +282,11 @@ class GaussianProcessCollection:
                 gp_K_plus_noise_inv_list.append(gp.model.K_plus_noise_inv.detach())
                 print('Loaded!')
             gp_K_plus_noise = torch.stack(gp_K_plus_noise_list)
-            gp_K_plus_noise_inv = torch.stack(gp_K_plus_noise_inv_list)      
-              
+            gp_K_plus_noise_inv = torch.stack(gp_K_plus_noise_inv_list)
+        
         self.K_plus_noise = gp_K_plus_noise
         self.K_plus_noise_inv = gp_K_plus_noise_inv
         self.casadi_predict = self.make_casadi_predict_func()
-        print('================== GP models loaded. =================')
 
     def get_hyperparameters(self,
                             as_numpy=False
@@ -1136,48 +1104,7 @@ class GaussianProcess:
                               ['mean'])
         return predict
     
-    # def make_se_kernel_derivative_func(self,
-    #                           train_x):
-    #     '''Get the derivative of the SE kernel with respect to the input.
-    #        See Berkenkamp and Schoellig, 2015, eq. (8) (9).
 
-    #        Args:
-    #             train_x (torch.Tensor): input training data (input_dim X N samples).
-    #        Outputs:
-    #             dkdx (np.array): Derivative of the kernel with respect to the input.
-    #             d2kdx2 (np.array): Second derivative of the kernel with respect to the input.
-    #     '''
-    #     train_x = train_x.numpy()
-    #     lengthscale = self.model.covar_module.base_kernel.lengthscale.detach().numpy()
-    #     output_scale = self.model.covar_module.outputscale.detach().numpy()
-
-    #     M = np.diag(lengthscale.reshape(-1))
-    #     M_inv = np.linalg.inv(M)
-    #     M_inv = ca.DM(M_inv)
-    #     assert M.shape[0] == train_x.shape[1], ValueError('Mismatch in input dimensions')
-    #     Nx = len(self.input_mask) # number of input dimension
-    #     num_data = train_x.shape[0] 
-    #     z = ca.SX.sym('z', Nx) # query point
-    #     # compute 1st derivative of the kernel (8)
-    #     dkdx = ca.SX.zeros(Nx, num_data)
-    #     for i in range(num_data):
-    #         dkdx[:, i] = (train_x[i] - z) * \
-    #                   covSEard(z, train_x[i].T, lengthscale.T, output_scale)
-    #     dkdx = M_inv**2 @ dkdx
-    #     # compute 2nd derivative of the kernel (9)
-    #     d2kdx2 = M_inv**2  * output_scale ** 2
-        
-    #     dkdx_func = ca.Function('dkdx',
-    #                             [z],
-    #                             [dkdx],
-    #                             ['z'],
-    #                             ['dkdx'])
-    #     d2kdx2_func = ca.Function('d2kdx2',
-    #                                 [z],
-    #                                 [d2kdx2],
-    #                                 ['z'],
-    #                                 ['d2kdx2'])
-    #     return dkdx_func, d2kdx2_func
     
     def make_casadi_linearized_prediction_func(self, train_inputs, train_targets):
         '''Get the linearized prediction casadi function.
@@ -1229,54 +1156,6 @@ class GaussianProcess:
                                             ['mean'])
         return linearized_predict
 
-    # def linearized_prediction(self,
-    #                           x, 
-    #                           requires_grad=False,
-    #                           return_pred=True
-    #                           ):
-    #     '''
-    #     Linearized predictions: 
-    #     See Berkenkamp and Schoellig, 2015, eq. (10) (11).
-
-    #     Args:
-    #         x : torch.Tensor (N_samples x input DIM).
-
-    #     Returns:
-    #         Predictions
-    #             mean : torch.tensor (nx X N_samples).
-    #             lower : torch.tensor (nx X N_samples).
-    #             upper : torch.tensor (nx X N_samples).
-    #     '''
-    #     self.model.eval()
-    #     self.likelihood.eval()
-    #     if isinstance(x, np.ndarray):
-    #         x = torch.from_numpy(x).double()
-    #     if self.input_mask is not None:
-    #         x = x[:, self.input_mask]
-    #     if self.NORMALIZE:
-    #         x = torch.from_numpy(self.scaler.transform(x))
-    #     if requires_grad:
-    #         predictions = self.likelihood(self.model(x))
-    #         mean = self.first_kernel_der(x) \
-    #                @ self.model.K_plus_noise_inv \
-    #                @ self.model.train_targets
-    #         cov = self.second_kernel_der(x) \
-    #             - self.first_kernel_der(x) @ self.model.K_plus_noise_inv @ self.first_kernel_der(x).T
-    #     else:
-    #         with torch.no_grad(), gpytorch.settings.fast_pred_var(state=True), \
-    #              gpytorch.settings.fast_pred_samples(state=True):
-    #             predictions = self.likelihood(self.model(x))
-    #             print('x: ', x)
-    #             print('self.first_kernel_der(x): ', self.first_kernel_der(x))
-    #             mean = self.first_kernel_der(x) \
-    #                @ self.model.K_plus_noise_inv \
-    #                @ self.model.train_targets
-    #             cov = self.second_kernel_der(x) \
-    #             - self.first_kernel_der(x) @ self.model.K_plus_noise_inv @ self.first_kernel_der(x).T
-    #     if return_pred:
-    #         return mean, cov, predictions
-    #     else:
-    #         return mean, cov
 
     def plot_trained_gp(self,
                         inputs,

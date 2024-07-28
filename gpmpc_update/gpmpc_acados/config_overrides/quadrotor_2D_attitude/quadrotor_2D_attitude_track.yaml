@@ -29,9 +29,8 @@ task_config:
       high: 0.05
   cost: quadratic
   inertial_prop:
-    - b_F: 18.112984649321753
-    - a_F: 3.7613154938448576
-    - pitch_rate: 60.00143727772195
+    M: 0.027
+    Iyy: 1.4e-05
   constraints:
     - constraint_form: default_constraint
       constrained_variable: input
